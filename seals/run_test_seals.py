@@ -395,9 +395,6 @@ if __name__ == '__main__':
         p.force_to_global_bb = True
 
 
-
-
-
     # Define which paths need to be in the base_data. Missing paths will be downloaded.
     p.required_base_data_paths = {}
     p.required_base_data_paths['global_countries_iso3_path'] = p.countries_iso3_path
@@ -441,24 +438,24 @@ if __name__ == '__main__':
     p.luh2_difference_from_base_year_task = p.add_task(seals_process_luh2.luh2_difference_from_base_year,                                                               run=1, skip_if_dir_exists=0)
     p.luh2_as_seals7_proportion_task = p.add_task(seals_process_luh2.luh2_as_seals7_proportion,                                                                         run=1, skip_if_dir_exists=0)
     p.seals7_difference_from_base_yea_task = p.add_task(seals_process_luh2.seals7_difference_from_base_year,                                                            run=1, skip_if_dir_exists=0)
-    p.calibration_generated_inputs_task = p.add_task(seals_main.calibration_generated_inputs,                                                                           run=1, skip_if_dir_exists=0)
-    p.calibration_task = p.add_iterator(seals_main.calibration, run_in_parallel=1,                                                                                      run=1, skip_if_dir_exists=0)
-    p.calibration_prepare_lulc_task = p.add_task(seals_main.calibration_prepare_lulc, parent=p.calibration_task,                                                        run=1, skip_if_dir_exists=0)
-    p.calibration_change_matrix_task = p.add_task(seals_main.calibration_change_matrix, parent=p.calibration_task,                                                      run=1, skip_if_dir_exists=0)
-    p.calibration_zones_task = p.add_task(seals_main.calibration_zones, parent=p.calibration_task,                                                                      run=1, skip_if_dir_exists=0, logging_level=20)
-    p.calibration_plots_task = p.add_task(seals_main.calibration_plots, parent=p.calibration_task,                                                                      run=1, skip_if_dir_exists=0)
-    p.luh_allocations_task = p.add_iterator(seals_main.scenarios, run_in_parallel=0,                                                                                    run=1, skip_if_dir_exists=0)
-    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, parent=p.luh_allocations_task, run_in_parallel=1,                                             run=1, skip_if_dir_exists=0)
-    p.prepare_lulc_task = p.add_task(seals_main.prepare_lulc, parent=p.allocation_zones_task,                                                                           run=1, skip_if_dir_exists=0)
-    p.allocation_change_matrix_task = p.add_task(seals_main.allocation_change_matrix, parent=p.allocation_zones_task,                                                   run=1, skip_if_dir_exists=0)
-    p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task,                                                                               run=1, skip_if_dir_exists=0)
+    p.calibration_generated_inputs_task = p.add_task(seals_main.calibration_generated_inputs,                                                                           run=0, skip_if_dir_exists=0)
+    p.calibration_task = p.add_iterator(seals_main.calibration, run_in_parallel=1,                                                                                      run=0, skip_if_dir_exists=0)
+    p.calibration_prepare_lulc_task = p.add_task(seals_main.calibration_prepare_lulc, parent=p.calibration_task,                                                        run=0, skip_if_dir_exists=0)
+    p.calibration_change_matrix_task = p.add_task(seals_main.calibration_change_matrix, parent=p.calibration_task,                                                      run=0, skip_if_dir_exists=0)
+    p.calibration_zones_task = p.add_task(seals_main.calibration_zones, parent=p.calibration_task,                                                                      run=0, skip_if_dir_exists=0, logging_level=20)
+    p.calibration_plots_task = p.add_task(seals_main.calibration_plots, parent=p.calibration_task,                                                                      run=0, skip_if_dir_exists=0)
+    p.luh_allocations_task = p.add_iterator(seals_main.scenarios, run_in_parallel=0,                                                                                    run=0, skip_if_dir_exists=0)
+    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, parent=p.luh_allocations_task, run_in_parallel=1,                                             run=0, skip_if_dir_exists=0)
+    p.prepare_lulc_task = p.add_task(seals_main.prepare_lulc, parent=p.allocation_zones_task,                                                                           run=0, skip_if_dir_exists=0)
+    p.allocation_change_matrix_task = p.add_task(seals_main.allocation_change_matrix, parent=p.allocation_zones_task,                                                   run=0, skip_if_dir_exists=0)
+    p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task,                                                                               run=0, skip_if_dir_exists=0)
     p.allocation_exclusive_task = p.add_task(seals_main.allocation_exclusive, parent=p.allocation_zones_task,                                                           run=0, skip_if_dir_exists=0)
     p.allocation_from_change_matrix_task = p.add_task(seals_main.allocation_from_change_matrix, parent=p.allocation_zones_task,                                         run=0, skip_if_dir_exists=0)
     p.change_pngs_task = p.add_task(seals_main.change_pngs, parent=p.allocation_zones_task,                                                                             run=0, skip_if_dir_exists=0)
     p.change_exclusive_pngs_task = p.add_task(seals_main.change_exclusive_pngs, parent=p.allocation_zones_task,                                                         run=0, skip_if_dir_exists=0)
     p.change_from_change_matrix_pngs_task = p.add_task(seals_main.change_from_change_matrix_pngs, parent=p.allocation_zones_task,                                       run=0, skip_if_dir_exists=0)
-    p.stitched_lulcs_task = p.add_task(seals_main.stitched_lulcs,                                                                                                       run=1, skip_if_dir_exists=0)
-    p.map_esa_simplified_back_to_esa_task = p.add_task(seals_main.map_esa_simplified_back_to_esa)
+    p.stitched_lulcs_task = p.add_task(seals_main.stitched_lulc_simplified_scenarios,                                                                                   run=1, skip_if_dir_exists=0)
+    p.map_esa_simplified_back_to_esa_task = p.add_task(seals_main.stitched_lulc_esa_scenarios)
 
 
 
