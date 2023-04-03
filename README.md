@@ -9,13 +9,6 @@ In order for the above line to work, you will need to set the project directory 
 
 To run a full version of the model, copy run_test_seals.py to a new file (i.e., run_seals.py) and set p.test_mode = False. You may also want to specify a new project directory to keep different runs separate.
 
-## Hazelbean
-SEALS relies on the Hazelbean project, available via PIP. Hazelbean is a collection of geospatial processing tools based on gdal, numpy, scipy, cython, pygeoprocessing, taskgraph, natcap.invest, geopandas and many others to assist in common spatial analysis tasks in sustainability science, ecosystem service assessment, global integrated modelling assessment,  natural capital accounting, and/or calculable general equilibrium modelling.
-
- Note that for hazelbean to work, your computer will need to be configured to compile Cython files to C code. This workflow is tested in a Python  3.10, 64 bit Windows environment. It should work on other system environments, but this is not yet tested. 
-
-
-
 ## Installation
 
 The following installation steps are very bloated and are basically a "kitchen-sink" approach to making sure every possibly-relevant library is intalled. Use at your own discretion.
@@ -48,7 +41,9 @@ If numpy throws "wrong size or changes size binary": upgrade numpy at the end of
 
 ## Hazelbean and Project Flow
 
-GTAP-InVEST relies on Hazelbean, a collection of geospatial processing tools based on gdal, numpy, scipy, cython, pygeoprocessing, taskgraph, natcap.invest, geopandas and many others to assist in common spatial analysis tasks in sustainability science, ecosystem service assessment, global integrated modelling assessment, natural capital accounting, and/or calculable general equilibrium modelling.
+SEALS relies on the Hazelbean project, available via PIP. Hazelbean is a collection of geospatial processing tools based on gdal, numpy, scipy, cython, pygeoprocessing, taskgraph, natcap.invest, geopandas and many others to assist in common spatial analysis tasks in sustainability science, ecosystem service assessment, global integrated modelling assessment,  natural capital accounting, and/or calculable general equilibrium modelling.
+
+Note that for hazelbean to work, your computer will need to be configured to compile Cython files to C code. This workflow is tested in a Python  3.10, 64 bit Windows environment. It should work on other system environments, but this is not yet tested. 
 
 One key component of Hazelbean is ProjectFlow, which manages directories, base_data, parallel computation and other details. ProjectFlow defines a tree of tasks that can easily be run in parallel where needed and keeping track of task-dependencies. ProjectFlow borrows heavily in concept (though not in code) from the taskgraph Python library but adds a predefined file structure suited to research and exploration tasks.
 
