@@ -34,6 +34,10 @@ The following installation steps are very bloated and are basically a "kitchen-s
 
 After your python environment is setup, use Git to clone the gtap_invest repository. Open run_test_gtap_pnas.py to replicate the model run used to generate results from the current submission. See the section "code structure" for more details on how to proceed further.
 
+## How to contribute and/or get access to pre-publication versions
+
+This repository is the most recent public release of SEALS and corresponds to the most recent academic publication of SEALS. However, there are newer versions of SEALS that are under active development. If you would like to contribute to the development of SEALS or would like to use the most recent version of SEALS, please complete the contributor license agreement in this repository and email it to the project maintainer to get access to the correct development version.
+
 ## Numpy errors
 
 If numpy throws "wrong size or changes size binary": upgrade numpy at the end of the installation process. See for details: https://stackoverflow.com/questions/66060487/valueerror-numpy-ndarray-size-changed-may-indicate-binary-incompatibility-exp
