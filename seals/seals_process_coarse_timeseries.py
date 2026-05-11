@@ -45,10 +45,9 @@ def regional_change(p):
                         
                         
                         # HACK Parse the case where it's a gtapinvest task
-                        if p.regional_projections_input_path.endswith('gtap_econ_run_luc_vector'):
-                            # regional_change_classes_path1 = os.path.join(p.cur_dir, 'gtapinvest', os.path.basename(regional_change_classes_path1))
-                            regional_change_classes_path1 = os.path.join(p.regional_projections_input_path, 'lcoveraez_' + p.scenario_label + '.csv')
-                            pass
+                        if 'gtap_econ_run_luc_vector' in p.regional_projections_input_path:
+                            resolved_path = hb.replace_cat_ears_with_object_attributes(p.regional_projections_input_path, p)
+                            regional_change_classes_path1 = os.path.join(resolved_path, 'lcoveraez_' + p.scenario_label + '.csv')
                         
                         if hb.path_exists(regional_change_classes_path1):
                             regional_change_classes_path = regional_change_classes_path1
