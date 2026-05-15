@@ -2,6 +2,7 @@ import os
 import hazelbean as hb
 from hazelbean import spatial_projection
 from hazelbean import pyramids
+from seals import seals_utils
 
 def project_aoi(p):
     
@@ -97,3 +98,33 @@ def project_aoi(p):
                     
     else:
         raise NameError('Unable to interpret p.aoi.')
+
+
+def seals(p):
+    # Folder creation task, but with some skipper logic    
+    if p.run_this:
+        expected_paths = []
+        for index, row in p.scenarios_df.iterrows():       
+            seals_utils.assign_df_row_to_object_attributes(p, row)    
+            
+            for year in p.seals_years:
+                if p.scenario_type != 'baseline':
+                    stitched_output_name = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year)
+                    expected_path = os.path.join(p.cur_dir, 'stitched_lulc_simplified_scenarios', stitched_output_name + '.tif')
+                    expected_paths.append(expected_path)
+        skip_all = True
+        for path in expected_paths:
+            if not hb.path_exists(path):
+                skip_all = False
+                break
+            # 'C:/Users/jajohns/Files/gtap_invest/projects/ngfs/ngfs_pnas/intermediate/seals/stitched_lulc_simplified_scenarios/lulc_esa_seals7_ssp2_rcp45_ngfs-remind-magpie_baseline_ignore_dependencies_2050.tif'
+            # 'C:/Users/jajohns/Files/gtap_invest/projects/ngfs/ngfs_pnas/intermediate/seals/stitched_lulc_simplified_scenarios/lulc_esa_seals7_ssp2_rcp45_ngfs-remind-magpie_baseline_ignore_dependencies_2050.tif'
+        if skip_all:
+            p.skip_children = True
+        else:
+            p.skip_children = False
+        # if all([hb.path_exists(path) for path in expected_paths]):
+        #     p.skip_children = True
+            # Then skip the rest of the project because the base data isn't ready, which means the rest of the project can't be run without errors. This is a bit of a hacky way to do this, but it allows us to avoid having to write a bunch of skip logic in each individual task.
+
+    pass    
