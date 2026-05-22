@@ -83,14 +83,21 @@ def project_aoi(p):
             p.bb_exact = hb.spatial_projection.get_bounding_box(p.aoi_path)
             p.bb = hb.pyramids.get_pyramid_compatible_bb_from_vector_and_resolution(p.aoi_path, p.processing_resolution_arcseconds)
 
-        # Create a PROJECT-SPECIFIC version of these clipped ones.
-        p.aoi_ha_per_cell_fine_path = os.path.join(p.cur_dir, 'pyramids', 'aoi_ha_per_cell_fine.tif')
+       
+        if p.aoi == 'global':
+            p.aoi_ha_per_cell_fine_path = p.get_path(pyramids.pyramid_ha_per_cell_ref_paths[p.fine_resolution_arcseconds])
+            p.aoi_ha_per_cell_coarse_path = p.get_path(pyramids.pyramid_ha_per_cell_ref_paths[p.coarse_resolution_arcseconds])
+
+        else:     # Create a PROJECT-SPECIFIC version of these clipped ones.
+            p.aoi_ha_per_cell_fine_path = os.path.join(p.cur_dir, 'pyramids', 'aoi_ha_per_cell_fine.tif')
+            p.aoi_ha_per_cell_coarse_path = os.path.join(p.cur_dir, 'pyramids', 'aoi_ha_per_cell_coarse.tif')
+        
         if not hb.path_exists(p.aoi_ha_per_cell_fine_path):
             hb.create_directories(p.aoi_ha_per_cell_fine_path)
             cur_path = p.get_path(hb.ha_per_cell_ref_paths[p.fine_resolution_arcseconds])
             hb.clip_raster_by_bb(cur_path, p.bb, p.aoi_ha_per_cell_fine_path)
         
-        p.aoi_ha_per_cell_coarse_path = os.path.join(p.cur_dir, 'pyramids', 'aoi_ha_per_cell_coarse.tif')
+        
         if not hb.path_exists(p.aoi_ha_per_cell_coarse_path):
             hb.create_directories(p.aoi_ha_per_cell_coarse_path)
             cur_path = p.get_path(hb.ha_per_cell_ref_paths[p.coarse_resolution_arcseconds])
