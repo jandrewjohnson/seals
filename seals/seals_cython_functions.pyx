@@ -16,7 +16,13 @@ from libc.math cimport sin
 from libc.math cimport fabs
 import math, time   
 
-@cython.cdivision(False)
+# NZ_brazil fix (2026-05-28): cdivision=True so int64/int64 returns int (C semantics)
+# instead of float64 (Python semantics). Required for line 231's array indexing under
+# NumPy 2.x which rejects float scalars as indices. The file-level directive at line 1
+# already says cdivision=True; this decorator was an explicit per-function override that
+# inverted the file default. Sister function seals_allocation_gridded_input still has the
+# False override at line ~265 — may need same fix later if that path is exercised.
+@cython.cdivision(True)
 @cython.boundscheck(True)
 @cython.wraparound(True)
 def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_change_matrix_4d not None,

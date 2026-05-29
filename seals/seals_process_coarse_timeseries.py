@@ -567,8 +567,10 @@ def lulc_as_coarse_states(p):
         calc_change_matrix_of_two_int_arrays
 
     if p.run_this:
-        p.ha_per_cell_coarse = hb.ArrayFrame(p.global_ha_per_cell_course_path)
-        p.coarse_match = hb.ArrayFrame(p.global_ha_per_cell_course_path)
+        # NZ_brazil fix: was p.global_ha_per_cell_course_path (typo + never set).
+        # Use the global ha-per-cell path (matches the original 'global_' intent).
+        p.ha_per_cell_coarse = hb.ArrayFrame(p.ha_per_cell_coarse_path)
+        p.coarse_match = hb.ArrayFrame(p.ha_per_cell_coarse_path)  # NZ_brazil fix: typo+missing attr; use global
 
 
         # TODO This needs to be fixed so that it calculates on the reclassification in use (currently it's using simplified hardcoded but we need it to shift to)
