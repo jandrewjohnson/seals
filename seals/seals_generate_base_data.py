@@ -109,7 +109,7 @@ def lulc_clip(p):
 
             if p.scenario_type == 'baseline':
                 if p.aoi != 'global':
-                    for year in p.years:
+                    for year in p.base_years:
                         p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(year) + '.tif')
                         p.aoi_lulc_src_paths[year] = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
@@ -119,7 +119,7 @@ def lulc_clip(p):
                             hb.create_directories(p.aoi_lulc_src_paths[year])
                             hb.clip_raster_by_bb(p.base_data_lulc_src_paths[year], p.bb, p.aoi_lulc_src_paths[year])
                 else:
-                    for year in p.years:
+                    for year in p.base_years:
                         # filename = 'binary_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(year) + '_class_' + str(class_label) + '.tif'
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
@@ -218,7 +218,7 @@ def lulc_simplifications(p):
                                 hb.reclassify_raster_hb(p.lulc_src_paths[year], rules, output_raster_path=output_path, output_data_type=1, array_threshold=10000, match_path=p.lulc_src_paths[year], verbose=False)
 
                 else:
-                    for year in p.years:
+                    for year in p.base_years:
                         search_path = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, simplified_filename_start + str(year) + '.tif')
                         found_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                         p.base_data_lulc_simplified_paths[year] = found_path
@@ -253,7 +253,7 @@ def lulc_binaries(p):
 
             if p.scenario_type == 'baseline':
                 if p.aoi != 'global':
-                    for year in p.years:
+                    for year in p.base_years:
 
                         p.base_data_binary_paths[year] = {}
                         p.aoi_binary_paths[year] = {}
@@ -274,7 +274,7 @@ def lulc_binaries(p):
                                     hb.raster_calculator_flex(p.lulc_simplified_paths[year], lambda x: np.where(x == int(p.lulc_correspondence_dict['dst_labels_to_ids'][class_label]), 1, 0), output_path=output_path)
 
                 else:
-                    for year in p.years:
+                    for year in p.base_years:
 
                         p.base_data_binary_paths[year] = {}
                         p.aoi_binary_paths[year] = {}
@@ -358,16 +358,19 @@ def lulc_convolutions(p):
                     # current_input_binary_path = p.lulc_simplified_binary_paths[current_file_root]
 
                     # First, define where the file should be created
-                    current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa', 
-                        p.lulc_simplification_label, 'convolutions', str(year), 
-                        'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + 
-                        str(label) + '_gaussian_' + str(sigma) + '.tif')
+                    current_convolution_ref_path = os.path.join('lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
+                    current_convolution_path = p.get_path(current_convolution_ref_path)
+                    # current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
 
                     # Store this path in dictionary
                     p.lulc_simplified_convolution_paths[current_convolution_name] = current_convolution_path
 
                     # Then check if it exists and add to parallel processing if needed
                     if not os.path.exists(p.lulc_simplified_convolution_paths[current_convolution_name]):
+                        
+                        # A little awkward, but here i don't follow the full ref-path approach because in this project it is in a seals folder wrapper, but i don't really want to have that in the base data cause this lulc is not seals specific.
+                        current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
+                        
                         hb.log(' Starting FFT Gaussian (in parallel) on ' + current_input_binary_path + 
                                ' and saving to ' + p.lulc_simplified_convolution_paths[current_convolution_name])
                         parallel_iterable.append([current_input_binary_path, kernel_path, 
