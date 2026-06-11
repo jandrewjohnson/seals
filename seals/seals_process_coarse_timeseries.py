@@ -946,7 +946,7 @@ def coarse_extraction(p):
                     }
                 else:
                     filter_dict = {
-                        'time': p.key_base_year +p.years,
+                        'time': [p.key_base_year]+p.years,
                     }
 
                 if not hb.path_exists(dst_dir):

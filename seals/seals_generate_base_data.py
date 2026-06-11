@@ -359,7 +359,7 @@ def lulc_convolutions(p):
 
                     # First, define where the file should be created
                     current_convolution_ref_path = os.path.join('lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
-                    current_convolution_path = p.get_path(current_convolution_ref_path)
+                    current_convolution_path = p.get_path(current_convolution_ref_path, raise_error_if_fail=False, verbose=True)
                     # current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
 
                     # Store this path in dictionary
