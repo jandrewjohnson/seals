@@ -1520,7 +1520,7 @@ def allocations(p):
                             p.iterator_replacements['previous_year'].append(p.key_base_year)
 
                     else:
-                        p.iterator_replacements['previous_year'].append(p.years[c-1])
+                        # p.iterator_replacements['previous_year'].append(p.years[c-1])
 
 
                         if hasattr(p, 'seals_years'):
