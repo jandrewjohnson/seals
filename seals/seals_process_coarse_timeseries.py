@@ -840,6 +840,8 @@ def coarse_extraction(p):
 
             if p.scenario_type == 'baseline':
 
+                if not p.coarse_projections_input_path:   # no netcdf coarse source (e.g. an observed-change baseline): nothing to extract
+                    continue
 
                 if hb.path_exists(p.coarse_projections_input_path):
                     src_nc_path = p.coarse_projections_input_path
