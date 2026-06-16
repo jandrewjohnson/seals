@@ -24,7 +24,25 @@ def regional_change(p):
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
 
+            # HACK to override with seals_years
+            if getattr(p, 'seals_years', None) is not None:
+                p.years = p.seals_years
+
+            if getattr(p, 'seals_key_base_year', None):
+                p.key_base_year = p.seals_key_base_year[0]
+
+
             if p.scenario_type != 'baseline':
+                # check if regional_projections_input_path is a dir
+                if os.path.isdir(p.regional_projections_input_path):
+                    p.regional_projections_input_path = os.path.join(p.regional_projections_input_path, f'lcoveraez_{p.counterfactual_label}.csv')  
+                    if not hb.path_exists(p.regional_projections_input_path):
+                        raise FileNotFoundError(f"Regional projections input path {p.regional_projections_input_path} does not exist.")
+                    # Then build the file name for the correct path based on 
+                    # /Users/jajohns/Files/gtap_invest/projects/ngfs/ngfs_pnas/
+                    # intermediate/gtap_econ_run_luc_vector/lcoveraez_baseline_cc_es_diff.csv/
+                    pass
+
                 if p.regional_projections_input_path:
                     regional_change_vector_path = p.aoi_path
                     coarse_ha_per_cell_path = p.aoi_ha_per_cell_coarse_path
@@ -770,13 +788,28 @@ def coarse_extraction_btc(p):
 
                 dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.model_label)
 
-                filter_dict = {'time': p.years}
-                # print(p.years)
-                # print(p.coarse_correspondence_dict)
+                # Use seals_key_base_year + seals_years if available (e.g., MAgPIE only has 2020, 2025, 2030...
+                # while p.years follows the GTAP annual clock 2023-2050). Falls back to p.years otherwise.
+                # Use seals_key_base_year + seals_years if available (e.g., MAgPIE only has 2020, 2025, 2030...
+                # while p.years follows the GTAP annual clock 2023-2050). Falls back to p.years otherwise.
+                if hasattr(p, 'seals_key_base_year') and hasattr(p, 'seals_years'):
+                    years_to_extract = sorted(set(p.seals_key_base_year + p.seals_years))
+                elif hasattr(p, 'seals_years'):
+                    years_to_extract = p.seals_years
+                else:
+                    years_to_extract = p.years
+                filter_dict = {'time': years_to_extract}
 
-                if not hb.path_exists(dst_dir):
+                # Re-extract if the parent dir is missing OR any year's subfolder is missing.
+                # The previous "parent dir only" check was brittle when the year set changed
+                # between runs (e.g. cached time_2050 but now also need time_2020).
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in years_to_extract
+                )
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_btc_netcdf(src_nc_path, dst_dir, filter_dict, p.coarse_correspondence_dict)
-                for year in p.years:
+                for year in years_to_extract:
                     out_dst_dir = os.path.join(dst_dir, 'time_' + str(year))
                     hb.create_directories(out_dst_dir)
 
@@ -795,14 +828,28 @@ def coarse_extraction_btc(p):
                     hb.log('No coarse change listed')
 
                 dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label)
-                filter_dict = {'time': p.years}
 
-                # print(p.years)
-                # print(p.coarse_correspondence_dict)
+                # Use seals_key_base_year + seals_years if available (MAgPIE 5-year clock
+                # vs GTAP annual clock).
+                # Use seals_key_base_year + seals_years if available (MAgPIE 5-year clock
+                # vs GTAP annual clock).
+                if hasattr(p, 'seals_key_base_year') and hasattr(p, 'seals_years'):
+                    years_to_extract = sorted(set(p.seals_key_base_year + p.seals_years))
+                elif hasattr(p, 'seals_years'):
+                    years_to_extract = p.seals_years
+                else:
+                    years_to_extract = p.years
+                filter_dict = {'time': years_to_extract}
 
-                if not hb.path_exists(dst_dir):
+                # Re-extract if any year's subfolder is missing (cache could be stale
+                # if year set changed between runs).
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in years_to_extract
+                )
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_btc_netcdf(src_nc_path, dst_dir, filter_dict, p.coarse_correspondence_dict)
-                for year in p.years:
+                for year in years_to_extract:
                     out_dst_dir = os.path.join(dst_dir, 'time_' + str(year))
                     hb.create_directories(out_dst_dir)
 
@@ -848,10 +895,15 @@ def coarse_extraction(p):
                 adjustment_dict = {
                     'time': row['time_dim_adjustment'],  # eg +850 or *5+14 eg
                 }
-
-                filter_dict = {
-                    'time': p.years,
-                }
+                # POSSIBLE HACK, check if the p object has a seals years and use that, otherwise use p.years
+                if hasattr(p, 'seals_key_base_year'):
+                    filter_dict = {
+                        'time': p.seals_key_base_year,
+                    }
+                else:
+                    filter_dict = {
+                        'time': p.years,
+                    }
 
                 if not hb.path_exists(dst_dir):
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
@@ -877,9 +929,16 @@ def coarse_extraction(p):
                     'time': row['time_dim_adjustment'],  # or *5+14 eg
                 }
 
-                filter_dict = {
-                    'time': p.years,
-                }
+                # POSSIBLE HACK, check if the p object has a seals years and use that, otherwise use p.years
+                if hasattr(p, 'seals_years'):
+                    filter_dict = {
+                        'time': p.seals_key_base_year + p.seals_years,
+                    }
+                else:
+                    filter_dict = {
+                        'time': p.key_base_year +p.years,
+                    }
+
                 if not hb.path_exists(dst_dir):
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
 
@@ -895,7 +954,13 @@ classification to the the destination classification, potentially aggregating cl
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Converting coarse_extraction to simplified proportion for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)) + ' with row ' + str([i for i in row]))
 
-
+            # Override p.years with the SEALS-aligned set. When seals_key_base_year is set,
+            # include it so the baseline (spatial reference) year is processed even though
+            # it's outside the GTAP annual sequence (e.g., MAgPIE 2020 vs GTAP 2023).
+            if hasattr(p, 'seals_key_base_year') and hasattr(p, 'seals_years'):
+                p.key_base_year = p.seals_key_base_year
+            if hasattr(p, 'seals_years'):
+                p.years = p.seals_years
 
             # p.coarse_correspondence_path = hb.get_first_extant_path(p.coarse_correspondence_path, [p.input_dir, p.base_data_dir])
             p.coarse_correspondence_dict = hb.utils.get_reclassification_dict_from_df(p.coarse_correspondence_path, 'src_id', 'dst_id', 'src_label', 'dst_label')
@@ -909,7 +974,7 @@ classification to the the destination classification, potentially aggregating cl
 
             if p.scenario_type == 'baseline':
 
-                for year in p.years:
+                for year in p.key_base_year:
 
                     dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year))
                     hb.create_directories(dst_dir)
@@ -959,7 +1024,7 @@ classification to the the destination classification, potentially aggregating cl
                             hb.save_array_as_geotiff(output_array, dst_path, src_path)
                             output_array = None
             else:
-                for year in p.years:
+                for year in p.key_base_year + p.years:
 
                     dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     hb.create_directories(dst_dir)
@@ -1014,11 +1079,25 @@ def coarse_simplified_ha(p):
 
     if p.run_this:
 
+
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Converting simplified proportion to simplified_ha for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)) + ' with row ' + str([i for i in row]))
 
+            if hasattr(p, 'seals_years'):
+                p.years = p.seals_years
+
+            if hasattr(p, 'seals_key_base_year'):
+                p.key_base_year = p.seals_key_base_year
+                p.base_years = p.seals_key_base_year
+
             if p.scenario_type == 'baseline':
+
+                # Overwrite if p has seals_key_base_year, otherwise use p.key_base_year
+                if hasattr(p, 'seals_key_base_year'):
+                    p.key_base_year = p.seals_key_base_year[0]
+                    p.base_years = [p.seals_key_base_year[0]]
+
                 for year in p.base_years:
                     src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.model_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year))
@@ -1039,7 +1118,7 @@ def coarse_simplified_ha(p):
 
 
             else:
-                for year in p.years:
+                for year in p.key_base_year + p.years:
 
                     src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
@@ -1068,6 +1147,9 @@ def coarse_simplified_ha_difference_from_base_year(p):
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Converting coarse_extraction to simplified proportion for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)) + ' with row ' + str([i for i in row]))
+
+            if hasattr(p, 'seals_years'):
+                p.years = p.seals_years
 
             if hb.path_exists(os.path.join(p.input_dir, p.coarse_correspondence_path)):
                 p.lulc_correspondence_dict = hb.utils.get_reclassification_dict_from_df(os.path.join(p.input_dir, p.coarse_correspondence_path), 'src_id', 'dst_id', 'src_label', 'dst_label')
@@ -1108,7 +1190,7 @@ def coarse_simplified_ha_difference_from_base_year(p):
                     base_year_path = os.path.join(base_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(base_year) + '.tif')
                     # base_year_path = os.path.join(base_year_dir, p.lulc_simplification_label + '_' + v + '.tif')
 
-                    for year in p.years:
+                    for year in [p.key_base_year]+ p.years:
 
                         src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                         src_path = os.path.join(src_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year) + '.tif')
@@ -1145,6 +1227,15 @@ def coarse_simplified_ha_difference_from_previous_year(p):
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Converting coarse_extraction to simplified proportion for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)) + ' with row ' + str([i for i in row]))
+
+
+            # Same year-set logic as coarse_simplified_proportion: prefer seals_years
+            # (with seals_key_base_year prepended) when present.
+            if hasattr(p, 'seals_key_base_year') and hasattr(p, 'seals_years'):
+                p.key_base_year = p.seals_key_base_year
+            
+            if hasattr(p, 'seals_years'):
+                p.years = p.seals_years
 
             if hb.path_exists(p.coarse_correspondence_path):
                 p.lulc_correspondence_dict = hb.utils.get_reclassification_dict_from_df(p.coarse_correspondence_path, 'src_id', 'dst_id', 'src_label', 'dst_label')
@@ -1199,10 +1290,17 @@ def coarse_simplified_ha_difference_from_previous_year(p):
 
 
                         if current_starting_year is None:
-                            base_year = int(row['key_base_year'])
+                            # Prefer seals_key_base_year for the spatial baseline lookup
+                            # (e.g., MAgPIE 2020) when the GTAP key_base_year (e.g., 2023)
+                            # doesn't exist in the coarse data.
+                            if 'seals_key_base_year' in row.index and not pd.isna(row['seals_key_base_year']):
+                                base_year = int(str(row['seals_key_base_year']).split(' ')[0])
+                            else:
+                                base_year = int(row['key_base_year'])
                             current_starting_year = base_year
-                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
-                            current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(current_starting_year) + '.tif')
+                        if previous_year is None:
+                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, p.climate_label, baseline_reference_model, p.counterfactual_label, str(current_starting_year))
+                            current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + p.climate_label + '_' + baseline_reference_model + '_' + p.counterfactual_label + '_' + str(current_starting_year) + '.tif')
                         else:
 
 
