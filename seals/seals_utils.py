@@ -612,13 +612,15 @@ def assign_df_row_to_object_attributes(input_object, input_row):
         
         # Check if attribute name or attribute_value have cat_ears.
         has_cat_ears = hb.has_cat_ears(attribute_name) or hb.has_cat_ears(attribute_value)
+        if has_cat_ears:
+            replace_dict = hb.replace_cat_ears_with_object_attributes
+            attribute_value = hb.replace_cat_ears_with_object_attributes(attribute_value, input_object)
+            
 
             
         
-        # # Check if the attribute has cat_ears
-        # if '<^' in str(attribute_value):
-            
-        #     # build the replace dict
+
+            # build the replace dict
         #     # ce_list = hb.parse_to_ce_list(attribute_value) # BORKED
         #     # while 1:
                 

@@ -1415,6 +1415,13 @@ def allocations(p):
         p.iterator_replacements['year'] = []
         p.iterator_replacements['key_base_year'] = []
         p.iterator_replacements['previous_year'] = []
+
+        if hasattr(p, 'seals_years'):
+            p.iterator_replacements['seals_year'] = []
+
+        if hasattr(p, 'seals_key_base_year'):
+            p.iterator_replacements['seals_key_base_year'] = []
+
         p.iterator_replacements['calibration_parameters_source'] = []
         p.iterator_replacements['fine_resolution'] = []
         p.iterator_replacements['coarse_resolution'] = []
@@ -1428,13 +1435,23 @@ def allocations(p):
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
 
+            # HACK Seals_years, cannot use typical hack here cause has both
+            # if hasattr(p, 'seals_years'):
+            #     p.years = p.seals_years
+
+            # if hasattr(p, 'seals_key_base_year'):
+            #     p.key_base_year = p.seals_key_base_year[0]
+            years_to_use = p.years
+            if hasattr(p, 'seals_years'):
+                years_to_use = p.seals_years
+
             # scenario_type = row['scenario_type']
             # p.regional_projections_input_path
             if p.scenario_type != 'baseline':
                 # years = str(row['years']).split(' ')
 
 
-                for c, year in enumerate(p.years):
+                for c, year in enumerate(years_to_use):
                     if hasattr(p, 'regional_projections_input_path'):
                         
                         p.regional_projections_input_path = hb.replace_cat_ears_with_dict(p.regional_projections_input_path, {'year':year})
@@ -1486,13 +1503,32 @@ def allocations(p):
                     p.iterator_replacements['climate_label'].append(p.climate_label)
                     p.iterator_replacements['model_label'].append(p.model_label)
                     p.iterator_replacements['counterfactual_label'].append(p.counterfactual_label)
+                    p.iterator_replacements['key_base_year'].append(p.key_base_year)
+                    if hasattr(p, 'seals_key_base_year'):
+                        p.iterator_replacements['seals_key_base_year'].append(p.seals_key_base_year[0])
+
+                    if hasattr(p, 'seals_years'):
+                        p.iterator_replacements['seals_year'].append(year)
+
                     p.iterator_replacements['year'].append(year)
+
                     if c == 0:
-                        p.iterator_replacements['previous_year'].append(p.key_base_year)
+
+                        if hasattr(p, 'seals_key_base_year'):
+                            p.iterator_replacements['previous_year'].append(p.seals_key_base_year[0])
+                        else:
+                            p.iterator_replacements['previous_year'].append(p.key_base_year)
+
                     else:
                         p.iterator_replacements['previous_year'].append(p.years[c-1])
 
-                    p.iterator_replacements['key_base_year'].append(p.key_base_year)
+
+                        if hasattr(p, 'seals_years'):
+                            p.iterator_replacements['previous_year'].append(p.seals_years[c-1])
+                        else:
+                            p.iterator_replacements['previous_year'].append(p.years[c-1])
+
+
                     p.iterator_replacements['calibration_parameters_source'].append(p.calibration_parameters_source)
 
                     p.iterator_replacements['coarse_resolution'].append(coarse_resolution)
@@ -1511,6 +1547,7 @@ def allocations(p):
 
 
 def allocation_zones(p):
+
     # # Define the zones overwhich parallel allocation should be run
     # Generate lists of which zones change and thus need to be rerun. Note however that this is SUPER RISKY because if you have a partial run, it fails.
     p.combined_block_lists_paths = {
@@ -1525,11 +1562,32 @@ def allocation_zones(p):
     if p.run_this:
     
         if hasattr(p, 'regional_projections_input_path'):
+
+            # CANT IMPLEMENT THE STANDARD HACK CAUSE THIS USES BOTH DO IT AT RUNTIME
+            # # Implement seals_years hack
+            # if hasattr(p, 'seals_years'):
+            #     p.years = p.seals_years
+
+            # if hasattr(p, 'seals_key_base_year'):
+            #     p.key_base_year = p.seals_key_base_year
             
             if p.regional_projections_input_path:
-                replace_dict = {'<^year^>': str(p.years[0])}
-                regional_projections_input_path_pre1 = hb.replace_in_string_via_dict(p.regional_projections_input_path, replace_dict)                
-                
+                has_cat_ears = hb.has_cat_ears(p.regional_projections_input_path)
+                if has_cat_ears:
+                    cat_ears_present = hb.parse_to_ce_list(p.regional_projections_input_path)
+                    if 'year' in cat_ears_present:
+                        replace_dict = {'<^year^>': str(p.years[0])}
+                        regional_projections_input_path_pre1 = hb.replace_in_string_via_dict(p.regional_projections_input_path, replace_dict)                
+                    p.regional_projections_input_path = hb.replace_cat_ears_with_object_attributes(p.regional_projections_input_path, p)
+
+                # Check if it's a dir
+                if os.path.isdir(p.regional_projections_input_path):
+                    # Add the correct filename
+                    fegional_projections_input_path = os.path.join(p.regional_projections_input_path, 'coarse_simplified_ha_difference_from_previous_year.tif')
+
+                    # regional_change_classes_path = os.path.join(p.intermediate_dir, 'coarse_change', 'coarse_simplified_ha_difference_from_previous_year', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
+
+                regional_projections_input_path_pre1 = p.regional_projections_input_path
                 got_path = p.get_path(regional_projections_input_path_pre1)
                 task_dir = os.path.join(p.intermediate_dir, p.regional_projections_input_path)                            
 
@@ -1853,6 +1911,10 @@ def allocation(passed_p=None):
         # p.lulc_baseline_path = os.path.join(p.cur_dir, 'lulc_baseline.tif')
         p.zone_esa_simplified_lulc_base_year_path = os.path.join(p.cur_dir, 'zone_esa_' + p.lulc_simplification_label + '_lulc_base_year.tif')
         p.fine_match_path = p.initial_lulc_baseline_path
+
+        if isinstance(p.key_base_year, list):
+            p.key_base_year = p.key_base_year[0]
+
         p.lulc_ndv = hb.get_ndv_from_path(p.aoi_lulc_simplified_paths[p.key_base_year])
 
         p.loss_function_sigma = np.float64(7.0) # Set how much closeness vs farness matters in assessing accuracy. Sigma = 1 means you need to be REALLY close to count as a food prediction.
