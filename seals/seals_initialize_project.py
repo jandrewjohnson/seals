@@ -109,7 +109,7 @@ def initialize_scenario_definitions(p):
         # Read in the scenarios csv and assign the first row to the attributes of this object (in order to setup additional
         # project attributes like the resolutions of the fine scale and coarse scale data)
         p.scenarios_df = pd.read_csv(p.scenario_definitions_path)
-
+        # CCS QUESTION 3 let's make this rely on the standard input_template approach, and also follow the practice of the project_dir is just the parent of the repo root
     # Set p attributes from df (but only the first row, cause its for initialization)
     for index, row in p.scenarios_df.iterrows():
 
