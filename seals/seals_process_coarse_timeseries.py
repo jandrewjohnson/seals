@@ -18,6 +18,17 @@ import netCDF4 as nc
 import seals
 from seals import seals_utils
 
+
+def key_base_years_as_list(key_base_year):
+    """Normalize p.key_base_year to a list of years for iteration/concatenation.
+
+    seals_api_parsing.assign_df_row_to_object_attributes parses a single-value key_base_year cell
+    as a bare scalar int (it is the one *year* attribute special-cased not to be wrapped in a list),
+    but a multi-value cell as a list. Use sites that iterate key_base_year or concatenate it with
+    p.years must treat it as a list, so coerce here."""
+    return key_base_year if isinstance(key_base_year, list) else [key_base_year]
+
+
 def regional_change(p):
     if p.run_this:
         
@@ -947,7 +958,7 @@ def coarse_extraction(p):
                     }
                 else:
                     filter_dict = {
-                        'time': p.key_base_year + p.years,
+                        'time': key_base_years_as_list(p.key_base_year) + p.years,
                     }
 
                 if not hb.path_exists(dst_dir):
@@ -985,8 +996,8 @@ classification to the the destination classification, potentially aggregating cl
 
             if p.scenario_type == 'baseline':
 
-                for year in p.key_base_year:
-                    
+                for year in key_base_years_as_list(p.key_base_year):
+
                     #l /Users/jajohns/Files/seals/projects/standard/intermediate/coarse_change/coarse_simplified_proportion/baseline/luh2-message/2017/urban_prop_baseline_luh2-message_2017.tif
 
 
@@ -1038,7 +1049,7 @@ classification to the the destination classification, potentially aggregating cl
                             hb.save_array_as_geotiff(output_array, dst_path, src_path)
                             output_array = None
             else:
-                for year in p.key_base_year + p.years:
+                for year in key_base_years_as_list(p.key_base_year) + p.years:
 
                     dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     hb.create_directories(dst_dir)
@@ -1145,7 +1156,7 @@ def coarse_simplified_ha(p):
 
 
             else:
-                for year in p.key_base_year + p.years:
+                for year in key_base_years_as_list(p.key_base_year) + p.years:
 
                     src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
@@ -1217,7 +1228,7 @@ def coarse_simplified_ha_difference_from_base_year(p):
                     base_year_path = os.path.join(base_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(base_year) + '.tif')
                     # base_year_path = os.path.join(base_year_dir, p.lulc_simplification_label + '_' + v + '.tif')
 
-                    for year in p.key_base_year+ p.years:
+                    for year in key_base_years_as_list(p.key_base_year) + p.years:
 
                         src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                         src_path = os.path.join(src_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year) + '.tif')
