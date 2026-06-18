@@ -67,10 +67,9 @@ def regional_change(p):
                             
                                                     
                         # HACK Parse the case where it's a gtapinvest task
-                        if p.regional_projections_input_path.endswith('gtap_econ_run_luc_vector'):
-                            # regional_change_classes_path1 = os.path.join(p.cur_dir, 'gtapinvest', os.path.basename(regional_change_classes_path1))
-                            regional_change_classes_path1 = os.path.join(p.regional_projections_input_path, 'lcoveraez_' + p.scenario_label + '.csv')
-                            pass
+                        if 'gtap_econ_run_luc_vector' in p.regional_projections_input_path:
+                            resolved_path = hb.replace_cat_ears_with_object_attributes(p.regional_projections_input_path, p)
+                            regional_change_classes_path1 = os.path.join(resolved_path, 'lcoveraez_' + p.scenario_label + '.csv')
                         
                         if hb.path_exists(regional_change_classes_path1):
                             regional_change_classes_path = regional_change_classes_path1
@@ -590,8 +589,10 @@ def lulc_as_coarse_states(p):
         calc_change_matrix_of_two_int_arrays
 
     if p.run_this:
-        p.ha_per_cell_coarse = hb.ArrayFrame(p.global_ha_per_cell_course_path)
-        p.coarse_match = hb.ArrayFrame(p.global_ha_per_cell_course_path)
+        # NZ_brazil fix: was p.global_ha_per_cell_course_path (typo + never set).
+        # Use the global ha-per-cell path (matches the original 'global_' intent).
+        p.ha_per_cell_coarse = hb.ArrayFrame(p.ha_per_cell_coarse_path)
+        p.coarse_match = hb.ArrayFrame(p.ha_per_cell_coarse_path)  # NZ_brazil fix: typo+missing attr; use global
 
 
         # TODO This needs to be fixed so that it calculates on the reclassification in use (currently it's using simplified hardcoded but we need it to shift to)

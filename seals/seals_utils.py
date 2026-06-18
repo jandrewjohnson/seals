@@ -723,13 +723,31 @@ def assign_df_row_to_object_attributes(input_object, input_row):
     model_spec['regional_projections_input_path'] = ''
     assign_defaults_from_model_spec(input_object, model_spec)
 
+    # If seals_years is set and this is a non-baseline scenario, override p.years with p.seals_years.
+    # This lets SEALS iterate over a coarser year grid (e.g. MAgPIE's 5-year timesteps) while GTAP
+    # tasks keep using annual p.years (GTAP uses gtappy_utils.assign_df_row_to_object_attributes,
+    # not this SEALS version, so GTAP tasks are unaffected by this override).
+    seals_years = getattr(input_object, 'seals_years', None)
+    scenario_type = getattr(input_object, 'scenario_type', None)
+    if (isinstance(seals_years, list) and len(seals_years) > 0
+            and all(isinstance(y, int) for y in seals_years)
+            and scenario_type is not None and str(scenario_type) != 'baseline'):
+        input_object.years = seals_years
+
 def set_derived_attributes(p):
 
     # Resolutions come from the fine and coarse maps
     p.fine_resolution = hb.get_cell_size_from_path(p.base_year_lulc_path)
     p.fine_resolution_arcseconds = hb.pyramid_compatible_resolution_to_arcseconds[p.fine_resolution]
     
-    if hb.path_exists(p.coarse_projections_input_path):
+    # Check for explicit coarse resolution from scenarios.csv column.
+    # Regional (non-global) NetCDFs need this because auto-detection assumes
+    # global extent (180/num_lat_cells) and computes wrong values.
+    explicit_coarse_resolution = getattr(p, 'coarse_resolution_arcseconds', None)
+    if explicit_coarse_resolution is not None:
+        p.coarse_resolution_arcseconds = float(explicit_coarse_resolution)
+        p.coarse_resolution = hb.pyramid_compatible_resolutions[p.coarse_resolution_arcseconds]
+    elif hb.path_exists(p.coarse_projections_input_path):
         p.coarse_resolution = hb.get_cell_size_from_path(p.coarse_projections_input_path)
         p.coarse_resolution_arcseconds = hb.pyramid_compatible_resolution_to_arcseconds[p.coarse_resolution]
     else:
@@ -1551,18 +1569,38 @@ def convert_regional_change_to_coarse(regional_change_vector_path, regional_chan
     ### Define the allocation of the total to individual cells
     
     # Creates a dict for each zone_id: to_allocate, which will be reclassified onto the zone ids.
+    # NOTE: This function is called once per year by regional_change(), with output_dir and
+    # output_filename_end already set for that specific year. The year loop here is kept for
+    # backward compatibility but we filter the merged data to the correct year when possible.
+    # The caller passes `years` (all scenario years) — we use `output_filename_end` to infer
+    # which year the caller wants.
+
+    # Extract the target year from output_filename_end (format: _YYYY_PREVYYYY_ha_diff_...)
+    import re as _re
+    _year_match = _re.match(r'_(\d{4})_', output_filename_end)
+    _target_year = int(_year_match.group(1)) if _year_match else None
+
     for year_c, year in enumerate(years):
         allocate_per_zone_dict = {}
+
+        # Filter to target year if the CSV has a 'year' column (multi-year regional projections).
+        # Without this filter, the inner loop overwrites allocate_per_zone_dict for each year's row,
+        # and only the last year's values survive.
+        if 'year' in merged.columns and _target_year is not None:
+            merged_this_year = merged[merged['year'] == _target_year]
+        else:
+            merged_this_year = merged
+
         for column in columns_to_process:
             output_path = os.path.join(output_dir, column + output_filename_end)
-            
+
             if not hb.path_exists(output_path):
                 hb.log('Processing ' + column + ' for ' + scenario_label + ',  writing to ' + output_path)
                 regions_column_id = regions_column_id.replace('label', 'id')
-                
 
-                for i, change in merged[column].items():
-                    zone_id = int(merged[regions_column_id][i])
+
+                for i, change in merged_this_year[column].items():
+                    zone_id = int(merged_this_year[regions_column_id][i])
                     
                     if int(zone_id) in n_cells_per_zone:
                         n_cells = n_cells_per_zone[int(zone_id)] # BAD HACK, should be generalized to know ahead of time if it's an int or string
