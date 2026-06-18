@@ -578,7 +578,12 @@ def calibration_prepare_lulc(passed_p=None):
 
         # Clip ha_per_cell and use it as the match
         # TODOO Is this needed? delete if so.
-        chunk_ha_per_cell_coarse = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_coarse_path, p.processing_blocks_list, output_path=p.chunk_ha_per_cell_course_path)
+        # NZ_brazil patch: was p.processing_blocks_list, which is in PROCESSING-resolution
+        # pixel units (1x1 for 1deg processing). Reading from a coarse-resolution raster
+        # with that block list returns 1 coarse cell instead of the full processing block
+        # (4x4 coarse cells for 1deg processing x 0.25deg coarse). This is what made
+        # chunk_coarse_match be (1,1) and the change matrix be (7,7) instead of (28,28).
+        chunk_ha_per_cell_coarse = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_coarse_path, p.coarse_blocks_list, output_path=p.chunk_ha_per_cell_course_path)
 
         p.chunk_ha_per_cell_coarse = hb.ArrayFrame(p.chunk_ha_per_cell_course_path)
         p.chunk_coarse_match = hb.ArrayFrame(p.chunk_ha_per_cell_course_path)
@@ -589,15 +594,17 @@ def calibration_prepare_lulc(passed_p=None):
 
         # calibration_zone =
 
-        p.lulc_base_year_chunk_10sec_path = os.path.join(p.cur_dir, 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif')
-        p.lulc_training_start_year_chunk_10sec_path = os.path.join(p.cur_dir, 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.training_start_year) + '.tif')
+        p.lulc_base_year_chunk_10sec_path = os.path.join(p.cur_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif')
+        p.lulc_training_start_year_chunk_10sec_path = os.path.join(p.cur_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.training_start_year) + '.tif')
 
         # Clip ha_per_cell and use it as the match
-        hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths['lulc_esa_' + p.lulc_simplification_label + '_' + str(p.key_base_year)], p.fine_blocks_list, output_path=p.lulc_base_year_chunk_10sec_path)
-        hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths['lulc_esa_' + p.lulc_simplification_label + '_' + str(p.training_start_year)], p.fine_blocks_list, output_path=p.lulc_training_start_year_chunk_10sec_path)
+        hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths[p.key_base_year], p.fine_blocks_list, output_path=p.lulc_base_year_chunk_10sec_path)
+        hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths[p.training_start_year], p.fine_blocks_list, output_path=p.lulc_training_start_year_chunk_10sec_path)
         p.fine_match = hb.ArrayFrame(p.lulc_base_year_chunk_10sec_path)
 
-        p.ha_per_cell_coarse = hb.ArrayFrame(p.global_ha_per_cell_course_path)
+        # NZ_brazil fix: was p.global_ha_per_cell_course_path (typo + never set).
+        # Use the global ha-per-cell path (matches the original 'global_' intent).
+        p.ha_per_cell_coarse = hb.ArrayFrame(p.ha_per_cell_coarse_path)
         # p.coarse_match = hb.ArrayFrame(p.global_ha_per_cell_course_path)
 
         fine_cells_per_coarse_cell = round((p.chunk_ha_per_cell_coarse.cell_size / p.fine_match.cell_size) ** 2)
@@ -614,9 +621,9 @@ def calibration_prepare_lulc(passed_p=None):
         else:
             p.calculate_change_matrix = 0
         if p.calculate_change_matrix or True: # I think this always needs to be run
-            net_change_output_arrays = np.zeros((len(p.class_indices), p.chunk_coarse_match.shape[0], p.chunk_coarse_match.shape[1]))
-            full_change_matrix = np.zeros((len(p.class_indices * p.chunk_coarse_match.n_rows), len(p.class_indices) * p.chunk_coarse_match.n_cols))
-            full_change_matrix_no_diagonal = np.zeros((len(p.class_indices * p.chunk_coarse_match.n_rows), len(p.class_indices) * p.chunk_coarse_match.n_cols))
+            net_change_output_arrays = np.zeros((len(p.all_class_indices), p.chunk_coarse_match.shape[0], p.chunk_coarse_match.shape[1]))
+            full_change_matrix = np.zeros((len(p.all_class_indices * p.chunk_coarse_match.n_rows), len(p.all_class_indices) * p.chunk_coarse_match.n_cols))
+            full_change_matrix_no_diagonal = np.zeros((len(p.all_class_indices * p.chunk_coarse_match.n_rows), len(p.all_class_indices) * p.chunk_coarse_match.n_cols))
             for r in range(p.chunk_coarse_match.num_rows):
                 for c in range(p.chunk_coarse_match.num_cols):
 
@@ -626,19 +633,19 @@ def calibration_prepare_lulc(passed_p=None):
 
                     ha_per_cell_coarse_this_subarray = p.chunk_ha_per_cell_coarse.data[r, c]
 
-                    change_matrix, counters = calc_change_matrix_of_two_int_arrays(t1_subarray.astype(np.int), t2_subarray.astype(np.int), p.class_indices)
+                    change_matrix, counters = calc_change_matrix_of_two_int_arrays(t1_subarray.astype(np.int32), t2_subarray.astype(np.int32), p.all_class_indices)
 
                     vector = seals_utils.calc_change_vector_of_change_matrix(change_matrix)
 
                     ha_per_cell_this_subarray = p.chunk_ha_per_cell_coarse.data[r, c] / fine_cells_per_coarse_cell
 
                     if vector:
-                        for i in p.class_indices:
+                        for i in p.all_class_indices:
                             net_change_output_arrays[i - 1, r, c] = vector[i - 1] * ha_per_cell_this_subarray
                     else:
                         net_change_output_arrays[i, r, c] = 0.0
 
-                    n_classes = len(p.class_indices)
+                    n_classes = len(p.all_class_indices)
                     full_change_matrix[r * n_classes: (r + 1) * n_classes, c * n_classes: (c + 1) * n_classes] = change_matrix
 
                     # Fill diagonal with zeros.
@@ -653,10 +660,12 @@ def calibration_prepare_lulc(passed_p=None):
 
             write_change_matrix_rasters = 1
             if write_change_matrix_rasters:
-                calibration_full_change_matrix_path = os.path.join(p.cur_dir, 'calibration_full_change_matrix.tif')
-                hb.save_array_as_geotiff(full_change_matrix, calibration_full_change_matrix_path, p.chunk_coarse_match.path, n_rows=full_change_matrix.shape[1], n_cols=full_change_matrix.shape[1])
+                # NZ_brazil patch: store path on p so the consumer at line 1003
+                # can read it back. Was a local variable, never bound to p.
+                p.calibration_full_change_matrix_path = os.path.join(p.cur_dir, 'calibration_full_change_matrix.tif')
+                hb.save_array_as_geotiff(full_change_matrix, p.calibration_full_change_matrix_path, p.chunk_coarse_match.path, n_rows=full_change_matrix.shape[0], n_cols=full_change_matrix.shape[1])
                 full_change_matrix_no_diagonal_path = os.path.join(p.cur_dir, 'full_change_matrix_no_diagonal.tif')
-                hb.save_array_as_geotiff(full_change_matrix_no_diagonal, full_change_matrix_no_diagonal_path, p.chunk_coarse_match.path, n_rows=full_change_matrix_no_diagonal.shape[1], n_cols=full_change_matrix_no_diagonal.shape[1])
+                hb.save_array_as_geotiff(full_change_matrix_no_diagonal, full_change_matrix_no_diagonal_path, p.chunk_coarse_match.path, n_rows=full_change_matrix_no_diagonal.shape[0], n_cols=full_change_matrix_no_diagonal.shape[1])
 
         # TODOO make this work between gtap1 and magpie. maybe by making it coarse_land_change?
         magpie_long_label = 'SSP2_test_cell.land_0.5_primother_share_'
@@ -780,7 +789,7 @@ def calibration_zones_logit(passed_p=None):
 
 
         # Iterate through each of the classes that we are going to predict
-        for c, target_class_index in enumerate(p.class_indices):
+        for c, target_class_index in enumerate(p.all_class_indices):
 
             rf.dependent_variable_label = p.class_labels[c] + '_presence_constraint'
             dependent_row = spatial_regressors_df.loc[spatial_regressors_df['spatial_regressor_name'] == rf.dependent_variable_label]
@@ -953,11 +962,22 @@ def calibration_zones(passed_p=None):
         # For now, i chose to just start with the gtap values so that i don't have to create a newly build right-size spreadsheet
         spatial_regressor_starting_coefficients_read = pd.read_csv(starting_coefficients_path, index_col=0)
         # spatial_regressor_starting_coefficients_read = pd.read_csv(os.path.join(p.input_dir, 'spatial_regressor_starting_coefficients.csv'), index_col=0)
-        spatial_regressor_starting_coefficients = spatial_regressor_starting_coefficients_read[p.seals_class_names].values.astype(np.float64).T
+        # NZ_brazil fix: pad to len(p.class_labels) rows so the array aligns with the
+        # (n_all x n_all) coarse_change_matrix at line 1011 and the Cython kernel's
+        # from_class iteration. CSV has only n_changing class columns (5 for us vs
+        # len(p.class_labels)=7), so we insert zero rows for non-changing classes
+        # (water, other) at their positions within p.all_class_indices. Default
+        # ESA+LUH2 has the same 7-vs-5 split; this latent mismatch only fires on
+        # fresh calibration since most users run allocation with bundled coefficients.
+        csv_coefs = spatial_regressor_starting_coefficients_read[p.seals_class_names].values.astype(np.float64).T  # shape (n_changing, n_regressors)
+        spatial_regressor_starting_coefficients = np.zeros((len(p.class_labels), csv_coefs.shape[1]), dtype=np.float64)
+        all_idx_list = list(p.all_class_indices)
+        for i, changing_idx in enumerate(p.changing_class_indices):
+            spatial_regressor_starting_coefficients[all_idx_list.index(changing_idx)] = csv_coefs[i]
 
         # TODOO I have inconsistent usage of p.lulc_simplification_label. Use this throughout.
-        observed_lulc_array = hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths['lulc_esa_'+ p.lulc_simplification_label + '_' + str(p.training_end_year)], p.fine_blocks_list).astype(np.int64)
-        p.lulc_ndv = hb.get_ndv_from_path(p.lulc_simplified_paths['lulc_esa_'+ p.lulc_simplification_label + '_' + str(p.training_end_year)])
+        observed_lulc_array = hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths[p.training_end_year], p.fine_blocks_list).astype(np.int64)
+        p.lulc_ndv = hb.get_ndv_from_path(p.lulc_simplified_paths[p.training_end_year])
         valid_mask_array = np.where((observed_lulc_array != p.lulc_ndv), 1, 0).astype(np.int64)
 
         p.observed_current_coarse_change_input_paths = hb.list_filtered_paths_nonrecursively(p.calibration_prepare_lulc_dir, include_strings='observed', include_extensions='.tif')
@@ -981,7 +1001,9 @@ def calibration_zones(passed_p=None):
                 correct_coarse_block_list = p.coarse_blocks_list
             if spatial_layer_types[c] == 'additive' or spatial_layer_types[c] == 'multiplicative':
                 if normalize_inputs is True:
-                    spatial_layers_3d[c] = hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list))
+                    # NZ_brazil fix: normalize_array returns NaN on all-zero chunks (divide by zero).
+                    # Wrap with nan_to_num so a missing class in this block does not poison suitability.
+                    spatial_layers_3d[c] = np.nan_to_num(hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)), nan=0.0)
                 else:
                     spatial_layers_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)
             elif spatial_layer_types[c][0:8] == 'gaussian':
@@ -989,7 +1011,8 @@ def calibration_zones(passed_p=None):
                 # L.debug('updated_path', updated_path)
                 L.debug('path', path)
                 if normalize_inputs is True:
-                    spatial_layers_3d[c] = hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list))
+                    # NZ_brazil fix: nan_to_num wrap (see site 1 above).
+                    spatial_layers_3d[c] = np.nan_to_num(hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)), nan=0.0)
                 else:
                     L.debug('fine_blocks_list', p.fine_blocks_list)
                     spatial_layers_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)  # NOTE assumes already clipped
@@ -1061,10 +1084,10 @@ def calibration_zones(passed_p=None):
 
             # Mixed methods here: Eventually this should work with the scenarios tree input structure.
             # p.change_class_labels_list = [int(i.split('_')[1]) for i in spatial_regressors_df.columns[3:]]
-            p.change_class_labels = np.asarray(p.class_indices, dtype=np.int64)  # For Cythonization, load these as the "labels", which is used for writing.
+            p.change_class_labels = np.asarray(p.all_class_indices, dtype=np.int64)  # For Cythonization, load these as the "labels", which is used for writing.
 
             # NOTE: This and the previous 3 attempts dealt with what I think is an inconsistency on how load_geotiff_chunk_by_cr_size deals with datatypes. Updating the environment made the 2nd one fail until I took out the datatype argument. I think it was expecting a gdal number.
-            lulc_baseline_array = hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths['lulc_esa_' + p.lulc_simplification_label + '_' + str(p.training_start_year)], p.fine_blocks_list, output_path=p.lulc_baseline_path).astype(np.int64)
+            lulc_baseline_array = hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths[p.training_start_year], p.fine_blocks_list, output_path=p.lulc_baseline_path).astype(np.int64)
             # lulc_baseline_array = hb.load_geotiff_chunk_by_cr_size(p.lulc_simplified_paths['lulc_esa_simplified_' + str(p.training_start_year)], p.fine_blocks_list, datatype=np.int64, output_path=p.lulc_baseline_path).astype(np.int64)
             # lulc_baseline_array = hb.load_geotiff_chunk_by_cr_size(p.training_start_year_simplified_lulc_path, p.fine_blocks_list, datatype=np.int64, output_path=p.lulc_baseline_path).astype(np.int64)
 
@@ -1381,14 +1404,14 @@ def calibration_plots(passed_p=None):
     if p.run_this:
 
         for c, class_label in enumerate(p.class_labels):
-            baseline_array = hb.as_array(os.path.join(p.cur_dir, '../calibration_prepare_lulc', 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.training_start_year) + '.tif'))
-            observed_array = hb.as_array(os.path.join(p.cur_dir, '../calibration_prepare_lulc', 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif'))
+            baseline_array = hb.as_array(os.path.join(p.cur_dir, '../calibration_prepare_lulc', 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.training_start_year) + '.tif'))
+            observed_array = hb.as_array(os.path.join(p.cur_dir, '../calibration_prepare_lulc', 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif'))
             # os.path.join(p.cur_dir, '../calibration_zones', 'lulc_simplified_projected.tif')
 
             listed_paths = hb.list_filtered_paths_nonrecursively(os.path.join(p.cur_dir, '../calibration_zones'), include_strings='lulc_projected', include_extensions='.tif')
             projected_path_last_gen = sorted(listed_paths)[-1]
             projected_array = hb.as_array(projected_path_last_gen)
-            lulc_class = p.class_indices[c]
+            lulc_class = p.all_class_indices[c]
             difference_metric_path = os.path.join(p.cur_dir, '../calibration_zones', 'class_' + p.class_labels[c] + '_similarity_plot.tif')
 
             also_plot_binary_results = 0
@@ -1559,8 +1582,9 @@ def allocation_zones(p):
         'global_processing_blocks_list': os.path.join(p.cur_dir, 'global_processing_blocks_list.csv'),
     }
     
+    hb.log(f'DEBUG allocations ENTRY: run_this={p.run_this}, has_regional={hasattr(p, "regional_projections_input_path")}, regional_path={getattr(p, "regional_projections_input_path", "NOT SET")}')
     if p.run_this:
-    
+
         if hasattr(p, 'regional_projections_input_path'):
 
             # CANT IMPLEMENT THE STANDARD HACK CAUSE THIS USES BOTH DO IT AT RUNTIME
@@ -1624,6 +1648,7 @@ def allocation_zones(p):
         b = p.regional_projections_input_path
         c = p.projected_coarse_change_dir
         p.projected_coarse_change_dir = projected_coarse_change_dir
+        hb.log(f'DEBUG allocations: projected_coarse_change_dir = {projected_coarse_change_dir}')
         hb.log(f'\n\nChecking if can use a precached block list for counterfactual_label:\n {p.combined_block_lists_paths}')
         try:
             if all(hb.path_exists(i) for i in p.combined_block_lists_paths.values()):

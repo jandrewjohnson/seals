@@ -360,7 +360,6 @@ def lulc_convolutions(p):
                     # First, define where the file should be created
                     current_convolution_ref_path = os.path.join('lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
                     current_convolution_path = p.get_path(current_convolution_ref_path, raise_error_if_fail=False, verbose=True)
-                    # current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
 
                     # TRICKY, the only way to get this to work without using the _get_first_extant as above was to have a second pass here if it didn't find one.
                     # INTERPRETATION, we are effectivly adding fine_processed_input_dir as a psuedo cannonical path                    
@@ -413,9 +412,9 @@ def local_data_regressors_starting_values(p):
             # Set Multiplicative (constraint) coefficients
             for c, label in enumerate(p.all_class_labels):
                 # TODOO RENAME Everything Full and Simp instead of ESA and seals7_simplified_mosaic_is_natural.... This will generalize to any dataset.
-                base_data_path = os.path.join(p.base_data_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'class_' + str(p.all_class_labels[c]) + '.tif')
+                base_data_path = os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'binary_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '.tif')
 
-                extant_path =  os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'class_' + str(p.all_class_labels[c]) + '.tif')
+                extant_path =  os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'binary_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '.tif')
 
                 row = [label + '_presence_constraint', extant_path,
                        'multiplicative'] + \
@@ -425,9 +424,9 @@ def local_data_regressors_starting_values(p):
             # Set additive coefficients
             # for class binaries
             for c, label in enumerate(p.all_class_labels):
-                base_data_path = os.path.join(p.base_data_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'class_' + str(p.all_class_labels[c]) + '.tif')
+                base_data_path = os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'binary_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '.tif')
 
-                extant_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'class_' + str(p.all_class_labels[c]) + '.tif')
+                extant_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'binaries', str(p.key_base_year), 'binary_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '.tif')
 
 
                 row = [label + '_presence',
@@ -454,10 +453,14 @@ def local_data_regressors_starting_values(p):
                     [1, 1, 1, 1, 1],
                 ]
 
-                for c, label in enumerate(p.changing_class_labels):
-                    base_data_path = os.path.join(p.base_data_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'class_' + str(p.changing_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
+                # NZ_brazil patch (2026-05-31): iterate all_class_labels (7) to add
+                # water/other gaussian regressors so the calibration matches Justin's
+                # bundled CSV structure. The 7x5 change_class_adjacency_effects matrix
+                # above already has rows for c=5 (water) and c=6 (other) = [1,1,1,1,1].
+                for c, label in enumerate(p.all_class_labels):
+                    base_data_path = os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'convolution_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
 
-                    extant_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', 'esa',  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'class_' + str(p.changing_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
+                    extant_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'convolution_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
 
                     row = [label + '_gaussian_' + str(sigma),
                            extant_path,
