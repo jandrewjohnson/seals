@@ -367,3 +367,4 @@ tests/optional_test_data
 *.c
 
 *.png
+.DS_Store
