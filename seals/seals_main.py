@@ -223,7 +223,7 @@ def combined_trained_coefficients(p):
 
     calibration_dir = os.path.join(extraction_dir, 'intermediate', 'calibration')
 
-    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + ' .csv')
+    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + '.csv')
 
     if p.run_this:
 
