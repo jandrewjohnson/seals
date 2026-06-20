@@ -250,7 +250,7 @@ def combined_trained_coefficients(p):
             df = pd.concat(list_of_dfs, axis=0, ignore_index=True)
 
             hb.log('extract_calibration_from_project() found ' + str(len(extant_block_calibration_paths)) + ' calibration files.')
-            df.to_excel(p.combined_calibration_file_path)
+            df.to_csv(p.combined_calibration_file_path)
 
 
 
