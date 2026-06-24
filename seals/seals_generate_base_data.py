@@ -202,7 +202,7 @@ def lulc_simplifications(p):
 
             if p.scenario_type == 'baseline':
                 if p.aoi != 'global':
-                    for year in p.years:
+                    for year in p.base_years:
 
                         p.base_data_lulc_simplified_paths[year] = os.path.join(base_data_lulc_simplified_dir, simplified_filename_start + str(year) + '.tif')
                         p.aoi_lulc_simplified_paths[year] = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, simplified_filename_start + str(year) + '.tif')
