@@ -1,3 +1,18 @@
+"""ASPIRATIONAL / NOT WIRED IN.
+
+This module is a planned, future model-spec-driven parsing layer (e.g. parse a
+markdown model spec into project attributes). It is NOT part of the live code
+path: it is not exported from seals/__init__.py and the only thing that imports
+it is seals_tests/manual_t_api_utils.py.
+
+Production parsing currently lives in seals_utils.py (assign_df_row_to_object_attributes,
+set_derived_attributes, generate_scenarios_csv_and_put_in_input_dir). The copies
+here are an intentional parking spot for the future model_spec design, not a
+maintained second implementation -- do not treat them as a variant to reconcile,
+and do not import from here in production code until this is actually built out
+(parse_model_spec_md is still a stub).
+"""
+
 import os
 import hazelbean as hb
 import pandas as pd
