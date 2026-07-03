@@ -1632,3 +1632,93 @@ def combine_coarsified_regional_with_coarse_estimate(coarsified_path, coarse_est
         hb.raster_calculator_flex([coarsified_path, coarse_estimate_path], covariate_regavg_shift, output_path)
 
 
+
+
+# ---- OSM energy-plant footprints + Sentinel-2 dating (SEALS energy-class inputs) ----
+def parse_capacity_mw(tagval):
+    """Capacity in MW from an OSM plant:output:electricity tag. OSM stores it many ways:
+    '100 MW', '50MW', '4.5 MWp' (PV peak), '0.5 GW', '100000000' (raw watts), 'yes', or
+    several values joined by ';'. Units matched case-insensitively, optional 'p' suffix
+    allowed, multiple values summed. A bare number is watts if large, MW if small. Returns
+    None when nothing is parseable."""
+    import re
+    s = str(tagval).strip().lower().replace(",", "")
+    if not s or s in ("yes", "no"):
+        return None
+    factor = {"w": 1e-6, "kw": 1e-3, "mw": 1.0, "gw": 1e3}
+    hits = re.findall(r"([\d.]+)\s*([kmg]?w)p?\b", s)
+    if hits:
+        return sum(float(num) * factor[unit] for num, unit in hits)
+    if re.fullmatch(r"[\d.]+", s):
+        x = float(s)
+        return x / 1e6 if x >= 1e5 else x
+    return None
+
+
+def overpass_plants_to_gdf(bbox, source, area_crs=6933):
+    """OSM power=plant features (plant:source == source) within bbox=(south, west, north,
+    east), as a GeoDataFrame with the mapped footprint polygon, capacity_mw, name, and
+    area_km2. 'out geom tags' returns full polygon vertices, so geometry is each plant's
+    mapped site outline. area_km2 is the polygon area in an equal-area CRS (default
+    EPSG:6933) = the gross mapped site extent (close to converted land for solar; the whole
+    -farm envelope for wind). Uses the generic hb.read_overpass transport; MW via
+    parse_capacity_mw."""
+    import geopandas as gpd
+    from shapely.geometry import Point, Polygon
+    s, w, n, e = bbox
+    q = (f'[out:json][timeout:180];'
+         f'(nwr["power"="plant"]["plant:source"="{source}"]({s},{w},{n},{e}););'
+         f'out geom tags;')
+    recs = []
+    for el in hb.read_overpass(q):
+        g = el.get("geometry")
+        if el.get("type") == "way" and g and len(g) >= 3:
+            geom = Polygon([(pt["lon"], pt["lat"]) for pt in g])
+        elif "lon" in el:
+            geom = Point(el["lon"], el["lat"])
+        elif "bounds" in el:
+            b = el["bounds"]
+            geom = Point((b["minlon"] + b["maxlon"]) / 2, (b["minlat"] + b["maxlat"]) / 2)
+        else:
+            continue
+        t = el.get("tags", {})
+        cap_raw = t.get("plant:output:electricity", "")
+        recs.append({"source": source, "name": t.get("name", ""),
+                     "capacity_raw": cap_raw, "capacity_mw": parse_capacity_mw(cap_raw),
+                     "geometry": geom})
+    gdf = gpd.GeoDataFrame(recs, crs="EPSG:4326")
+    poly = gdf.geom_type.isin(["Polygon", "MultiPolygon"])
+    gdf["area_km2"] = float("nan")
+    if poly.any():
+        gdf.loc[poly, "area_km2"] = gdf.loc[poly].to_crs(area_crs).area / 1e6
+    return gdf
+
+
+def detect_iso3_column(gdf, iso3_codes, min_matches=10):
+    """Name of the gdf column whose values best match the given ISO3 codes (>= min_matches
+    overlaps). Auto-detects the ISO3 field of a boundary vector. Raises if none matches."""
+    ref = set(iso3_codes)
+    for c in gdf.columns:
+        vals = set(str(v) for v in gdf[c].dropna().unique())
+        if len(vals & ref) >= min_matches:
+            return c
+    raise ValueError("no ISO3 column found in boundaries")
+
+
+def sentinel2_indices(roi, year, month_start=6, month_end=9, cloud_pct=60):
+    """Dry-season median Sentinel-2 NDVI and NDBI over an Earth Engine roi for one year.
+    Requires the earthengine-api, imported lazily (not a seals/hazelbean dependency)."""
+    import ee
+    a, b = ee.Date.fromYMD(year, month_start, 1), ee.Date.fromYMD(year, month_end, 30)
+
+    def msk(im):
+        qa = im.select("QA60")
+        clear = qa.bitwiseAnd(1 << 10).eq(0).And(qa.bitwiseAnd(1 << 11).eq(0))
+        return im.updateMask(clear).divide(10000)
+
+    col = (ee.ImageCollection("COPERNICUS/S2_HARMONIZED").filterBounds(roi).filterDate(a, b)
+           .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_pct)).map(msk)).median()
+    nir, red, swir = col.select("B8"), col.select("B4"), col.select("B11")
+    ndvi = nir.subtract(red).divide(nir.add(red).max(1e-6))
+    ndbi = swir.subtract(nir).divide(swir.add(nir).max(1e-6))
+    return ndvi, ndbi
