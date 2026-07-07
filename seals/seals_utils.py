@@ -1705,20 +1705,21 @@ def detect_iso3_column(gdf, iso3_codes, min_matches=10):
     raise ValueError("no ISO3 column found in boundaries")
 
 
-def sentinel2_indices(roi, year, month_start=6, month_end=9, cloud_pct=60):
-    """Dry-season median Sentinel-2 NDVI and NDBI over an Earth Engine roi for one year.
-    Requires the earthengine-api, imported lazily (not a seals/hazelbean dependency)."""
+def hls_indices(roi, year, month_start=6, month_end=9):
+    """Dry-season median NDVI and NDBI from Harmonized Landsat Sentinel-2 (HLS, 30 m) over an Earth
+    Engine roi for one year. HLSL30 (Landsat 8/9, 2013+) + HLSS30 (Sentinel-2, 2015+) are cross-
+    calibrated to one grid, so the series reaches before Sentinel-2 with no sensor jump. The scale
+    factor cancels in the normalized differences. earthengine-api imported lazily (not a seals dep)."""
     import ee
     a, b = ee.Date.fromYMD(year, month_start, 1), ee.Date.fromYMD(year, month_end, 30)
 
-    def msk(im):
-        qa = im.select("QA60")
-        clear = qa.bitwiseAnd(1 << 10).eq(0).And(qa.bitwiseAnd(1 << 11).eq(0))
-        return im.updateMask(clear).divide(10000)
+    def clear(im):                                   # HLS Fmask: bit 1 = cloud, bit 3 = cloud shadow
+        f = im.select("Fmask")
+        return im.updateMask(f.bitwiseAnd(1 << 1).eq(0).And(f.bitwiseAnd(1 << 3).eq(0)))
 
-    col = (ee.ImageCollection("COPERNICUS/S2_HARMONIZED").filterBounds(roi).filterDate(a, b)
-           .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_pct)).map(msk)).median()
-    nir, red, swir = col.select("B8"), col.select("B4"), col.select("B11")
-    ndvi = nir.subtract(red).divide(nir.add(red).max(1e-6))
-    ndbi = swir.subtract(nir).divide(swir.add(nir).max(1e-6))
-    return ndvi, ndbi
+    l30 = (ee.ImageCollection("NASA/HLS/HLSL30/v002").filterBounds(roi).filterDate(a, b)
+           .map(clear).select(["B4", "B5", "B6"], ["red", "nir", "swir"]))       # Landsat OLI
+    s30 = (ee.ImageCollection("NASA/HLS/HLSS30/v002").filterBounds(roi).filterDate(a, b)
+           .map(clear).select(["B4", "B8A", "B11"], ["red", "nir", "swir"]))     # Sentinel MSI (B8A = harmonized NIR)
+    col = l30.merge(s30).median()
+    return col.normalizedDifference(["nir", "red"]), col.normalizedDifference(["swir", "nir"])
