@@ -125,98 +125,12 @@ def api_dict_to_df(api_dict):
           
 # Make this follow model spec for all pre-processing and validation
 def assign_df_row_to_object_attributes(input_object, input_row):
-    # srtip() 
-    # Rules: 
-    # First check if is numeric
-    # Then check if has extension, is path
-    for attribute_name, attribute_value in list(zip(input_row.index, input_row.values)):
-  
-        try: 
-            float(attribute_value)
-            is_floatable = True
-        except:
-            is_floatable = False
-        try:
-            int(attribute_value)
-            is_intable = True
-        except:
-            is_intable = False
-        
-        if attribute_name == 'calibration_parameters_source':
-            pass
-        
-        # Check if the attribute has cat_ears
-        if '<^' in str(attribute_value):
-            
-            # build the replace dict
-            ce_list = hb.parse_to_ce_list(attribute_value)
-            replace_dict = {}
-            for i in ce_list:
-                if getattr(input_object, i) is not None:
-                    replace_dict[i] = getattr(input_object, i)
-            # replace the cat_ears
-            attribute_value = hb.replace_in_string_via_dict(attribute_value, replace_dict)
-        
-        
-        
-        # NOTE Clever use of p.get_path() here.
-        if '.' in str(attribute_value) and not is_floatable: # Might be a path        
-            if '<^' in str(attribute_value):
-                path = input_object.get_path(attribute_value, path_as_inputted=True)
-            else:    
-                path = input_object.get_path(attribute_value)
-            setattr(input_object, attribute_name, path)
-            
-        elif 'year' in attribute_name:
-            if ' ' in str(attribute_value):
-                new_attribute_value = []
-                for i in attribute_value.split(' '):
-                    try:
-                        new_attribute_value.append(int(i))
-                    except:
-                        new_attribute_value.append(str(i))
-                attribute_value = new_attribute_value
+    # Thin shim. The per-row value grammar is owned by hazelbean now (shared across
+    # seals, gtappy and the vertical parser). See hb.assign_to_object. NOTE: this
+    # module's parser is not referenced by any caller; seals_utils' version is the
+    # production one. Kept as a shim for consistency.
+    hb.assign_row_to_object_attributes(input_object, input_row)
 
-                # attribute_value = [int(i) if 'nan' not in str(i) and intable else None for i in attribute_value.split(' ')]  
-            elif is_intable:
-                if attribute_name == 'key_base_year':
-                    attribute_value = int(attribute_value)
-                else:
-                    attribute_value = [int(attribute_value)]
-            elif 'lulc' in attribute_name: #
-                attribute_value = str(attribute_value)
-            else:
-                if 'nan' not in str(attribute_value):
-                    try:
-                        attribute_value = [int(attribute_value)]
-                    except:
-                        attribute_value = [str(attribute_value)]
-                else:
-                    attribute_value = None
-            setattr(input_object, attribute_name, attribute_value)
-
-        elif 'dimensions' in attribute_name:
-            if ' ' in str(attribute_value):
-                attribute_value = [str(i) if 'nan' not in str(i) else None for i in attribute_value.split(' ')]  
-            else:
-                if 'nan' not in str(attribute_value):
-                    attribute_value = [str(attribute_value)]
-                else:
-                    attribute_value = None
-                  
-            setattr(input_object, attribute_name, attribute_value)
-        else:
-            if str(attribute_value).lower() == 'nan':
-                attribute_value = None
-                setattr(input_object, attribute_name, attribute_value)
-            else:
-                # Check if the t string
-                setattr(input_object, attribute_name, attribute_value)
-                
-                
-                
-    # UP NEXT: replicate the below 3 lines but referencing model spec. Also remember to add the regional_projections allocation algorithm input to the model spec. 
-                
     model_spec = {}
     model_spec['regional_projections_input_path'] = ''
     assign_defaults_from_model_spec(input_object, model_spec)
