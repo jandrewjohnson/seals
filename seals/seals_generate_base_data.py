@@ -130,7 +130,7 @@ def lulc_clip(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                             
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                         p.base_data_lulc_src_paths[year] = p.get_path(search_path)
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year] 
@@ -162,9 +162,12 @@ def lulc_clip_quick(p):
             src_filename_start = 'lulc_' + p.lulc_src_label + '_'
 
             if p.scenario_type == 'baseline':
+                seals_base_year = getattr(p, 'seals_key_base_year', None) or p.base_years
+                if isinstance(seals_base_year, (list, tuple)):
+                    seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
                         p.aoi_lulc_src_paths[year] = os.path.join(p.cur_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
@@ -178,7 +181,7 @@ def lulc_clip_quick(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
 
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                         p.base_data_lulc_src_paths[year] = p.get_path(search_path)
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year]
