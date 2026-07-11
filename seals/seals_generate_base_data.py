@@ -108,9 +108,15 @@ def lulc_clip(p):
             src_filename_start = 'lulc_' + p.lulc_src_label + '_'
 
             if p.scenario_type == 'baseline':
+                # The GTAP economic base_years (e.g. 2023) can have no ESA raster; the SEALS base-year LULC
+                # is seals_key_base_year (2020). Source that raster, but keep the dict keyed by base_years so
+                # downstream p.key_base_year lookups still resolve.
+                seals_base_year = getattr(p, 'seals_key_base_year', None) or p.base_years
+                if isinstance(seals_base_year, (list, tuple)):
+                    seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.base_years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
                         p.aoi_lulc_src_paths[year] = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
