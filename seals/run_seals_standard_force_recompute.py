@@ -16,17 +16,23 @@ def build_task_tree(p):
 def run_project(scenario_definitions_filename='standard_scenarios.csv',
                 project_name='test_standard_force_recompute',
                 extra_dirs=None,
-                append_timestamp=False,
-                tasks_to_skip=None,
-                execute=True):
+                run_mode='full',
+                tasks_to_skip=None):
     """Build and execute the standard SEALS pipeline, forcing recompute.
 
-    The __main__ run passes append_timestamp=True so each run gets a fresh
+    The __main__ run passes run_mode='full' so each run gets a fresh
     project dir and nothing is reused — everything recomputes from scratch.
-    append_timestamp=False reuses a stable project_name dir so repeated runs
-    resume in place. tasks_to_skip pares the tree for variant runs;
-    execute=False stops before p.execute(). Returns p.
+    run_mode='check' reuses a stable project_name dir so repeated runs
+    resume in place. tasks_to_skip pares the tree for variant runs. Returns p.
     """
+
+    valid_run_modes = ('check', 'fresh_intermediate', 'full')
+    if run_mode not in valid_run_modes:
+        raise ValueError('run_mode must be one of ' + str(valid_run_modes) + ', got ' + repr(run_mode))
+    if run_mode == 'fresh_intermediate' and 'test' not in project_name:
+        raise ValueError("run_mode='fresh_intermediate' deletes the project's intermediate/ and outputs/ "
+                         "dirs, so it is only allowed on dedicated test projects (project_name containing "
+                         "'test'), got " + repr(project_name))
 
     # Create a ProjectFlow Object to organize directories and enable parallel processing.
     p = hb.ProjectFlow()
@@ -38,12 +44,23 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     p.user_dir = os.path.expanduser('~')
     p.extra_dirs = extra_dirs if extra_dirs is not None else ['Files', 'seals', 'projects', 'tests']
     p.project_name = project_name
-    if append_timestamp:
-        p.project_name = p.project_name + '_' + hb.pretty_time()  # fresh dir per run; append_timestamp=False reuses/resumes.
+    if run_mode == 'full':
+        p.project_name = p.project_name + '_' + hb.pretty_time()  # fresh dir per run; other modes reuse/resume the stable dir.
 
     # Based on the paths above, set the project_dir. All files will be created in this directory.
     p.project_dir = os.path.join(p.user_dir, os.sep.join(p.extra_dirs), p.project_name)
     p.set_project_dir(p.project_dir)  # NOTE: auto-copies <script_dir>/input_template/ -> input/ (overwrite=False)
+    if run_mode == 'fresh_intermediate':
+        # Delete in place (rather than timestamping a new dir) so any path derived
+        # from project_dir still resolves to the fresh results. input/ is kept: it
+        # holds the per-machine backend connection values in parameters.csv that a
+        # freshly seeded template would leave blank.
+        import shutil
+        for stale_dir in [p.intermediate_dir, p.output_dir]:
+            if os.path.exists(stale_dir):
+                shutil.rmtree(stale_dir)
+                print("run_mode='fresh_intermediate': deleted " + stale_dir)
+
 
     p.run_in_parallel = 1 # Must be set before building the task tree if the task tree has parralel iterator tasks.
 
@@ -75,11 +92,10 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     p.L = hb.get_logger('test_run_seals')
     hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 
 
 if __name__ == '__main__':
-    run_project(append_timestamp=True)
+    run_project(run_mode='full')

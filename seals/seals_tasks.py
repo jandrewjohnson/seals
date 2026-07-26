@@ -12,6 +12,12 @@ def project_aoi(p):
     # Process p.aoi to set the regional_vector, bb, bb_exact, and aoi_ha_per_cell_paths
     if p.aoi is not None:
     # if isinstance(p.aoi, str):
+        # aoi's value can be a label ('global', an ISO3 code) or a vector path; its
+        # name doesn't end in _path so hydration leaves it literal. Resolve
+        # path-looking values here (leave_ref_path_if_fail so labels with dots
+        # degrade to the label branch instead of raising).
+        if isinstance(p.aoi, str) and hb.looks_like_path(p.aoi):
+            p.aoi = p.get_path(p.aoi, leave_ref_path_if_fail=True)
         if hb.path_exists(p.aoi):
             p.aoi_path = p.aoi
             p.aoi_label = os.path.splitext(os.path.basename(p.aoi))[0]

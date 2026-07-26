@@ -126,19 +126,26 @@ def build_task_tree(p):
 
 def run_project(scenario_definitions_filename='seals_cgebox_scenarios.csv',
                 project_name='seals_cgebox_devstack',
-                append_timestamp=False,
+                run_mode='check',
                 tasks_to_skip=None,
-                execute=True,
                 project_dir=None):
     """Build and execute the SEALS-CGEBox pipeline against a given scenarios CSV.
 
     The full run uses the default 'seals_cgebox_scenarios.csv'; the pared test run
     (run_seals_cgebox_test.py) passes 'seals_cgebox_scenarios_test.csv' — the task tree
-    is identical. append_timestamp=True gives a fresh project dir per run; the default
-    False reuses/resumes the stable dir. project_dir=None keeps the original DEVSTACK
+    is identical. run_mode='full' gives a fresh project dir per run; the default
+    'check' reuses/resumes the stable dir. project_dir=None keeps the original DEVSTACK
     layout (os.path.join('../projects', project_name), relative to the working
     directory); pass an explicit path to override.
     """
+
+    valid_run_modes = ('check', 'fresh_intermediate', 'full')
+    if run_mode not in valid_run_modes:
+        raise ValueError('run_mode must be one of ' + str(valid_run_modes) + ', got ' + repr(run_mode))
+    if run_mode == 'fresh_intermediate' and 'test' not in project_name:
+        raise ValueError("run_mode='fresh_intermediate' deletes the project's intermediate/ and outputs/ "
+                         "dirs, so it is only allowed on dedicated test projects (project_name containing "
+                         "'test'), got " + repr(project_name))
 
     # Create a ProjectFlow Object to organize directories and enable parallel processing.
     p = hb.ProjectFlow()
@@ -152,13 +159,24 @@ def run_project(scenario_definitions_filename='seals_cgebox_scenarios.csv',
     hb.log(f'Running script {__file__} with abs {os.path.abspath(__file__)}.')
 
     p.project_name = project_name
-    if append_timestamp:
+    if run_mode == 'full':
         p.project_name = p.project_name + '_' + hb.pretty_time() # fresh dir per run; default False reuses/resumes.
 
     if project_dir is None:
         project_dir = os.path.join('../projects', p.project_name) # DEVSTACK OPTION. If you're running a standalone repo clone, use the seals_cgebox_dev repo's run file (project_dir='..').
     p.project_dir = project_dir
     p.set_project_dir(p.project_dir)
+    if run_mode == 'fresh_intermediate':
+        # Delete in place (rather than timestamping a new dir) so any path derived
+        # from project_dir still resolves to the fresh results. input/ is kept: it
+        # holds the per-machine backend connection values in parameters.csv that a
+        # freshly seeded template would leave blank.
+        import shutil
+        for stale_dir in [p.intermediate_dir, p.output_dir]:
+            if os.path.exists(stale_dir):
+                shutil.rmtree(stale_dir)
+                print("run_mode='fresh_intermediate': deleted " + stale_dir)
+
 
     # Seed data dir: if the repo carries an input/seals_cgebox_input dir (obtained by git cloning),
     # copy its contents into the project's input dir. NOTE: this dir does not currently exist in
@@ -191,8 +209,7 @@ def run_project(scenario_definitions_filename='seals_cgebox_scenarios.csv',
     p.L = hb.get_logger('seals_cgebox')
     hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 

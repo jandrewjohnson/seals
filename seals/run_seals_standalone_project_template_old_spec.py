@@ -1,0 +1,1 @@
+# START HERE, make this a saparate repo and then not here. Also, need to fix the static_regressors finally, both pogging them and naming them correcting (no minutes_to_market_1m_=30sec etc) and fixing the sand_percent_10sec.tif.)
