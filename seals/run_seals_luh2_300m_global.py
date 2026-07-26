@@ -15,7 +15,6 @@ def build_task_tree(p):
 
 def run_project(scenario_definitions_filename='luh2_300m_global.csv',
                 project_name='luh2_300m_global',
-                extra_dirs=None,
                 run_mode='check',
                 tasks_to_skip=None):
     """Build and execute the LUH2 300m global SEALS pipeline against a given scenarios CSV.
@@ -26,41 +25,11 @@ def run_project(scenario_definitions_filename='luh2_300m_global.csv',
     variant runs. Returns p.
     """
 
-    valid_run_modes = ('check', 'fresh_intermediate', 'full')
-    if run_mode not in valid_run_modes:
-        raise ValueError('run_mode must be one of ' + str(valid_run_modes) + ', got ' + repr(run_mode))
-    if run_mode == 'fresh_intermediate' and 'test' not in project_name:
-        raise ValueError("run_mode='fresh_intermediate' deletes the project's intermediate/ and outputs/ "
-                         "dirs, so it is only allowed on dedicated test projects (project_name containing "
-                         "'test'), got " + repr(project_name))
-
     # Create a ProjectFlow Object to organize directories and enable parallel processing.
+    # set_project_dir_for_run_mode validates run_mode and infers the project_dir
+    # from the repo layout (see its docstring for run_mode semantics and inference).
     p = hb.ProjectFlow()
-
-    # Assign project-level attributes to the p object (such as in p.base_data_dir = ... below)
-    # including where the project_dir and base_data are located.
-    # The project_name is used to name the project directory below. If the directory exists, each task will not recreate
-    # files that already exist.
-    p.user_dir = os.path.expanduser('~')
-    p.extra_dirs = extra_dirs if extra_dirs is not None else ['Files', 'seals', 'projects']
-    p.project_name = project_name
-    if run_mode == 'full':
-        p.project_name = p.project_name + '_' + hb.pretty_time()  # fresh dir per run; other modes reuse/resume the stable dir.
-
-    # Based on the paths above, set the project_dir. All files will be created in this directory.
-    p.project_dir = os.path.join(p.user_dir, os.sep.join(p.extra_dirs), p.project_name)
-    p.set_project_dir(p.project_dir)  # NOTE: auto-copies <script_dir>/input_template/ -> input/ (overwrite=False)
-    if run_mode == 'fresh_intermediate':
-        # Delete in place (rather than timestamping a new dir) so any path derived
-        # from project_dir still resolves to the fresh results. input/ is kept: it
-        # holds the per-machine backend connection values in parameters.csv that a
-        # freshly seeded template would leave blank.
-        import shutil
-        for stale_dir in [p.intermediate_dir, p.output_dir]:
-            if os.path.exists(stale_dir):
-                shutil.rmtree(stale_dir)
-                print("run_mode='fresh_intermediate': deleted " + stale_dir)
-
+    p.set_project_dir_for_run_mode(project_name, run_mode)
 
     p.run_in_parallel = 1 # Must be set before building the task tree if the task tree has parralel iterator tasks.
 
