@@ -17,15 +17,13 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
                 project_name='standard',
                 extra_dirs=None,
                 run_mode='check',
-                tasks_to_skip=None,
-                execute=True):
+                tasks_to_skip=None):
     """Build and execute the minimal SEALS pipeline against a given scenarios CSV.
 
     run_mode='full' gives each run its own fresh project dir (the __main__
     default here, preserving the original always-timestamp behavior);
     run_mode='check' reuses a stable project_name dir so repeated runs
-    resume in place. tasks_to_skip pares the tree for variant runs;
-    execute=False stops before p.execute(). Returns p.
+    resume in place. tasks_to_skip pares the tree for variant runs. Returns p.
     """
 
     valid_run_modes = ('check', 'fresh_intermediate', 'full')
@@ -94,8 +92,7 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     p.L = hb.get_logger('test_run_seals')
     hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 

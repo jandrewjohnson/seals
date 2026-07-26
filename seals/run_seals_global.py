@@ -17,14 +17,13 @@ def run_project(scenario_definitions_filename='global_scenarios.csv',
                 project_name='global',
                 extra_dirs=None,
                 run_mode='check',
-                tasks_to_skip=None,
-                execute=True):
+                tasks_to_skip=None):
     """Build and execute the global SEALS pipeline against a given scenarios CSV.
 
     run_mode='full' gives each run its own fresh project dir; the default
     'check' reuses a stable project_name dir so repeated runs resume in place,
     skipping tasks whose outputs already exist. tasks_to_skip pares the tree for
-    variant runs; execute=False stops before p.execute(). Returns p.
+    variant runs. Returns p.
     """
 
     valid_run_modes = ('check', 'fresh_intermediate', 'full')
@@ -93,8 +92,7 @@ def run_project(scenario_definitions_filename='global_scenarios.csv',
     p.L = hb.get_logger('test_run_seals')
     hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 

@@ -115,7 +115,6 @@ def run_project(scenario_definitions_filename='scenarios.csv',
                 project_name='bonn_esm_cgebox_seals',
                 run_mode='check',
                 tasks_to_skip=None,
-                execute=True,
                 project_dir=None):
     """Build and execute the Bonn ESM CGEBox-SEALS pipeline against a given scenarios CSV.
 
@@ -195,8 +194,7 @@ def run_project(scenario_definitions_filename='scenarios.csv',
     p.L = hb.get_logger('bonn_esm_cgebox_seals')
     hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 

@@ -23,8 +23,7 @@ def build_task_tree(p):
 def run_project(scenario_definitions_filename='standard_scenarios.csv',
                 project_name='seals_project_template',
                 run_mode='check',
-                tasks_to_skip=None,
-                execute=True):
+                tasks_to_skip=None):
     """Full run and test run differ only by the scenarios CSV; run_mode='full'
     gives a fresh project dir per run; a stable project_name with
     run_mode='check' resumes in place, skipping completed tasks. Returns p."""
@@ -76,8 +75,7 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     p.L = hb.get_logger(p.project_name)
     hb.log('Created ProjectFlow object at ' + p.project_dir)
 
-    if execute:
-        p.execute()
+    p.execute()
 
     return p
 
