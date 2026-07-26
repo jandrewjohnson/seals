@@ -3,4 +3,4 @@ from run_seals_cgebox import run_project
 
 if __name__ == '__main__':
     run_project(scenario_definitions_filename='seals_cgebox_scenarios_test.csv',
-                append_timestamp=False)
+                run_mode='check')
