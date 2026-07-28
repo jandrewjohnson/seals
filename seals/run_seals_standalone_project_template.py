@@ -27,34 +27,12 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     """Full run and test run differ only by the scenarios CSV; run_mode='full'
     gives a fresh project dir per run; a stable project_name with
     run_mode='check' resumes in place, skipping completed tasks. Returns p."""
-    valid_run_modes = ('check', 'fresh_intermediate', 'full')
-    if run_mode not in valid_run_modes:
-        raise ValueError('run_mode must be one of ' + str(valid_run_modes) + ', got ' + repr(run_mode))
-    if run_mode == 'fresh_intermediate' and 'test' not in project_name:
-        raise ValueError("run_mode='fresh_intermediate' deletes the project's intermediate/ and outputs/ "
-                         "dirs, so it is only allowed on dedicated test projects (project_name containing "
-                         "'test'), got " + repr(project_name))
-
+    # Create a ProjectFlow Object to organize directories and enable parallel processing.
+    # set_project_dir_for_run_mode validates run_mode and sets the project_dir under
+    # ~/<extra_dirs>/<project_name> (see its docstring for the run_mode semantics).
     p = hb.ProjectFlow()
-
-    p.user_dir = os.path.expanduser('~')
-    p.extra_dirs = ['Files', 'seals', 'projects']
-    p.project_name = project_name
-    if run_mode == 'full':
-        p.project_name = p.project_name + '_' + hb.pretty_time()
-    p.project_dir = os.path.join(p.user_dir, os.sep.join(p.extra_dirs), p.project_name)
-    p.set_project_dir(p.project_dir)  # also copies input_template/ -> input/ (skip-existing)
-    if run_mode == 'fresh_intermediate':
-        # Delete in place (rather than timestamping a new dir) so any path derived
-        # from project_dir still resolves to the fresh results. input/ is kept: it
-        # holds the per-machine backend connection values in parameters.csv that a
-        # freshly seeded template would leave blank.
-        import shutil
-        for stale_dir in [p.intermediate_dir, p.output_dir]:
-            if os.path.exists(stale_dir):
-                shutil.rmtree(stale_dir)
-                print("run_mode='fresh_intermediate': deleted " + stale_dir)
-
+    p.set_project_dir_for_run_mode(project_name, run_mode,
+                                   extra_dirs=['Files', 'seals', 'projects'])
 
     p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
     p.data_credentials_path = None
