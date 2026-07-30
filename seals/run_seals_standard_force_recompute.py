@@ -27,11 +27,10 @@ def run_project(scenario_definitions_filename='standard_scenarios.csv',
     """
 
     # Create a ProjectFlow Object to organize directories and enable parallel processing.
-    # set_project_dir_for_run_mode validates run_mode and sets the project_dir under
-    # ~/<extra_dirs>/<project_name> (see its docstring for the run_mode semantics).
-    p = hb.ProjectFlow()
-    p.set_project_dir_for_run_mode(project_name, run_mode,
-                                   extra_dirs=extra_dirs if extra_dirs is not None else ['Files', 'seals', 'projects', 'tests'])
+    # The ProjectFlow constructor validates run_mode and sets the project_dir under
+    # ~/<extra_dirs>/<project_name> (see _resolve_project_dir for the run_mode semantics).
+    p = hb.ProjectFlow(project_name=project_name, run_mode=run_mode,
+                       extra_dirs=extra_dirs if extra_dirs is not None else ['Files', 'seals', 'projects', 'tests'])
 
     p.run_in_parallel = 1 # Must be set before building the task tree if the task tree has parralel iterator tasks.
 

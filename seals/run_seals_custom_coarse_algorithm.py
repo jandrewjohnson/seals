@@ -29,10 +29,9 @@ def run_project(scenario_definitions_filename='custom_coarse_algorithm_scenarios
     """
 
     # Create a ProjectFlow Object to organize directories and enable parallel processing.
-    # set_project_dir_for_run_mode validates run_mode and infers the project_dir
-    # from the repo layout (see its docstring for run_mode semantics and inference).
-    p = hb.ProjectFlow()
-    p.set_project_dir_for_run_mode(project_name, run_mode)
+    # The ProjectFlow constructor validates run_mode and infers the project_dir
+    # from the repo layout (see _resolve_project_dir for the semantics and inference).
+    p = hb.ProjectFlow(project_name=project_name, run_mode=run_mode)
 
     p.run_in_parallel = 1 # Must be set before building the task tree if the task tree has parralel iterator tasks.
 
