@@ -1,43 +1,99 @@
-# scenarios.csv Format
+# scenarios.csv Format (v1)
 
-The `scenarios.csv` file defines your SEALS scenarios. Each row represents one scenario.
+The scenarios CSV defines your SEALS scenarios. Each row is one scenario. The
+tracked copies that ship with SEALS are
+[`seals/input_template/standard_scenarios.csv`](../seals/input_template/standard_scenarios.csv)
+(three scenarios) and `standard_scenarios_test.csv` (a pared two-row version);
+this page documents their columns.
 
-## Column Reference
+> **This is the v1 schema — the one the code reads today.** A **v2 schema** is
+> specified in
+> [scenario_definitions.qmd](https://justinandrewjohnson.com/earth_economy_devstack/scenario_definitions.qmd)
+> and no code implements it yet. v2 fixes several structural problems in v1: it
+> replaces `baseline_reference_label` / `comparison_counterfactual_labels` /
+> per-model time columns with a `observed_reference_label` / `compared_to` /
+> `depends_on` split and a single canonical clock, and it allows hindcasting.
+> Write v1 for now; expect a migration when the hazelbean parser lands.
+
+## Column reference
+
+Values in the Example column are taken from the shipped `standard_scenarios.csv`.
 
 | Column | Description | Example |
 |--------|-------------|---------|
-| `scenario_label` | Unique scenario identifier | `baseline`, `ssp2_rcp45` |
-| `scenario_type` | `baseline` or `policy` | `baseline` |
-| `aoi` | Area of interest | `global` or `from_regional_projections_input_path` |
-| `exogenous_label` | Exogenous scenario name | `baseline` |
+| `scenario_label` | Unique scenario identifier | `baseline_luh2-message`, `ssp2_rcp45_luh2-message_bau` |
+| `scenario_type` | `baseline`, `bau`, or `policy` — see the note below | `baseline` |
+| `aoi` | Area of interest: `global`, an ISO3 code, or a path to a vector | `RWA` |
+| `exogenous_label` | Exogenous driver set | `baseline`, `ssp2` |
 | `climate_label` | Climate scenario | `rcp45` |
-| `model_label` | Model source | `gtap`, `magpie`, `luh2` |
-| `counterfactual_label` | Counterfactual reference | `baseline` |
+| `model_label` | Coarse-projection model source | `luh2-message` |
+| `counterfactual_label` | Counterfactual this row represents (blank on the baseline row) | `bau`, `bau_shift` |
 | `years` | Space-separated projection years | `2030 2050` |
-| `baseline_reference_label` | Reference scenario for policy | `baseline` (blank for baseline) |
-| `base_years` | Base year(s) | `2017` |
-| `key_base_year` | Key base year for LULC | `2017` |
-| `comparison_counterfactual_labels` | For comparisons | (usually blank) |
-| `time_dim_adjustment` | Time adjustment | `add2015` |
-| `coarse_projections_input_path` | Path to LUH2 data | `luh2/raw_data/rcp45_ssp2/...nc` |
-| `lulc_src_label` | LULC source | `esa` |
-| `lulc_simplification_label` | LULC class scheme | `seals7` |
-| `lulc_correspondence_path` | LULC correspondence file | `seals/default_inputs/esa_seals7_correspondence.csv` |
+| `baseline_reference_label` | `scenario_label` of the baseline row this one is measured against (blank on the baseline row) | `baseline_luh2-message` |
+| `base_years` | Observed/base year(s) | `2017` |
+| `key_base_year` | The base year used for LULC | `2017` |
+| `comparison_counterfactual_labels` | Scenario(s) this row is compared against in reporting | `ssp2_rcp45_luh2-message_bau` |
+| `time_dim_adjustment` | Offset applied to the source time dimension | `add2015` |
+| `coarse_projections_input_path` | Coarse projections NetCDF | `luh2/raw_data/rcp45_ssp2/multiple-states_..._2015-2100.nc` |
+| `lulc_src_label` | Fine LULC source | `esa` |
+| `lulc_simplification_label` | Fine LULC class scheme | `seals7` |
+| `lulc_correspondence_path` | Fine class correspondence | `seals/default_inputs/esa_seals7_correspondence.csv` |
 | `coarse_src_label` | Coarse data source | `luh2-14` |
 | `coarse_simplification_label` | Coarse class scheme | `seals7` |
-| `coarse_correspondence_path` | Coarse correspondence file | `seals/default_inputs/luh2-14_seals7_correspondence.csv` |
-| `lc_class_varname` | Land class variable | `all_variables` |
-| `dimensions` | Dimensions | `time` |
-| `calibration_parameters_source` | Calibration file | `seals/default_inputs/default_global_coefficients.csv` |
-| `base_year_lulc_path` | Base year LULC raster | `lulc/esa/lulc_esa_2017.tif` |
-| `regional_projections_input_path` | Regional projections CSV (optional) | `regional_projections/my_projections.csv` |
-| `regions_vector_path` | Regions shapefile | `cartographic/countries_iso3_with_label.gpkg` |
-| `regions_column_label` | Region column name | `iso3_label` |
+| `coarse_correspondence_path` | Coarse class correspondence | `seals/default_inputs/luh2-14_seals7_correspondence.csv` |
+| `lc_class_varname` | Land-class variable in the NetCDF | `all_variables` |
+| `dimensions` | Dimensions to read | `time` |
+| `calibration_parameters_source` | Downscaling coefficients | `seals/default_inputs/default_global_coefficients.csv` |
+| `base_year_lulc_path` | Base-year LULC raster | `lulc/esa/lulc_esa_2017.tif` |
+| `regional_projections_input_path` | Regional projections CSV (optional; blank if coarse-only) | `seals/default_inputs/rwa_bdi_regional_changes.csv` |
+| `regions_vector_path` | Regions vector | `cartographic/ee/ee_r264_correspondence.gpkg` |
+| `regions_column_label` | Region column in that vector | `ee_r264_label` |
+
+Paths are **ref_paths**: relative locations resolved by `p.get_path()`, which
+searches the project `input/` dir, then `base_data`, then the cloud bucket,
+downloading if needed. Always write them with **forward slashes**, on every
+platform.
+
+### A note on `scenario_type`
+
+Three values appear in current files:
+
+- `baseline` — the observed anchor. Not downscaled; it supplies base-year LULC
+  and calibration inputs.
+- `bau` — a business-as-usual trajectory. **Deprecated in favour of `baseline`.**
+  The migration is in progress and unevenly applied, so `bau` still appears in
+  shipped CSVs and is still read by the code. Do not rely on it for new work, but
+  do not be surprised to see it.
+- `policy` — a policy trajectory, downscaled and typically compared against a
+  BAU row via `comparison_counterfactual_labels`.
 
 ## Example
 
+The shipped `standard_scenarios.csv`: a Rwanda baseline, a BAU trajectory, and a
+policy row that shifts the BAU using regional projections.
+
 ```csv
 scenario_label,scenario_type,aoi,exogenous_label,climate_label,model_label,counterfactual_label,years,baseline_reference_label,base_years,key_base_year,comparison_counterfactual_labels,time_dim_adjustment,coarse_projections_input_path,lulc_src_label,lulc_simplification_label,lulc_correspondence_path,coarse_src_label,coarse_simplification_label,coarse_correspondence_path,lc_class_varname,dimensions,calibration_parameters_source,base_year_lulc_path,regional_projections_input_path,regions_vector_path,regions_column_label
-baseline,baseline,global,baseline,rcp45,luh2,baseline,2017,,2017,2017,,add2015,luh2/raw_data/rcp45_ssp2/multiple-states_input4MIPs_landState_ScenarioMIP_UofMD-MESSAGE-ssp245-2-1-f_gn_2015-2100.nc,esa,seals7,seals/default_inputs/esa_seals7_correspondence.csv,luh2-14,seals7,seals/default_inputs/luh2-14_seals7_correspondence.csv,all_variables,time,seals/default_inputs/default_global_coefficients.csv,lulc/esa/lulc_esa_2017.tif,,cartographic/countries_iso3_with_label.gpkg,iso3_label
-ssp2_rcp45,policy,global,ssp2,rcp45,luh2,ssp2_rcp45,2030 2050,baseline,2017,2017,,add2015,luh2/raw_data/rcp45_ssp2/multiple-states_input4MIPs_landState_ScenarioMIP_UofMD-MESSAGE-ssp245-2-1-f_gn_2015-2100.nc,esa,seals7,seals/default_inputs/esa_seals7_correspondence.csv,luh2-14,seals7,seals/default_inputs/luh2-14_seals7_correspondence.csv,all_variables,time,seals/default_inputs/default_global_coefficients.csv,lulc/esa/lulc_esa_2017.tif,,cartographic/countries_iso3_with_label.gpkg,iso3_label
+baseline_luh2-message,baseline,RWA,baseline,rcp45,luh2-message,,2017,,2017,2017,,add2015,luh2/raw_data/rcp45_ssp2/multiple-states_input4MIPs_landState_ScenarioMIP_UofMD-MESSAGE-ssp245-2-1-f_gn_2015-2100.nc,esa,seals7,seals/default_inputs/esa_seals7_correspondence.csv,luh2-14,seals7,seals/default_inputs/luh2-14_seals7_correspondence.csv,all_variables,time,seals/default_inputs/default_global_coefficients.csv,lulc/esa/lulc_esa_2017.tif,,cartographic/ee/ee_r264_correspondence.gpkg,ee_r264_label
+ssp2_rcp45_luh2-message_bau,bau,RWA,ssp2,rcp45,luh2-message,bau,2030 2050,baseline_luh2-message,2017,2017,,add2015,luh2/raw_data/rcp45_ssp2/multiple-states_input4MIPs_landState_ScenarioMIP_UofMD-MESSAGE-ssp245-2-1-f_gn_2015-2100.nc,esa,seals7,seals/default_inputs/esa_seals7_correspondence.csv,luh2-14,seals7,seals/default_inputs/luh2-14_seals7_correspondence.csv,all_variables,time,seals/default_inputs/default_global_coefficients.csv,lulc/esa/lulc_esa_2017.tif,,cartographic/ee/ee_r264_correspondence.gpkg,ee_r264_label
+ssp2_rcp45_luh2-message_bau_shift,policy,RWA,ssp2,rcp45,luh2-message,bau_shift,2030 2050,baseline_luh2-message,2017,2017,ssp2_rcp45_luh2-message_bau,add2015,luh2/raw_data/rcp45_ssp2/multiple-states_input4MIPs_landState_ScenarioMIP_UofMD-MESSAGE-ssp245-2-1-f_gn_2015-2100.nc,esa,seals7,seals/default_inputs/esa_seals7_correspondence.csv,luh2-14,seals7,seals/default_inputs/luh2-14_seals7_correspondence.csv,all_variables,time,seals/default_inputs/default_global_coefficients.csv,lulc/esa/lulc_esa_2017.tif,seals/default_inputs/rwa_bdi_regional_changes.csv,cartographic/ee/ee_r264_correspondence.gpkg,ee_r264_label
 ```
+
+> **Known wart:** the shipped CSVs currently write `base_year_lulc_path` as
+> `lulc\esa\lulc_esa_2017.tif`, with backslashes. The devstack rule is forward
+> slashes everywhere, on every platform; these should be normalized.
+
+## Where the file lives
+
+Put your scenarios CSV in an **`input_template/`** directory beside your run
+file. It is tracked in git; ProjectFlow copies anything missing into the
+project's untracked `input/` on first run and never overwrites the working copy.
+Name it in your run file's `__main__` block:
+
+```python
+p.scenario_definitions_filename = 'my_project_scenarios.csv'
+```
+
+If the named file is absent from both `input/` and `base_data`, SEALS generates a
+default one in the project's `input/` so a first run still works — edit that copy,
+or better, add your own to `input_template/`.
