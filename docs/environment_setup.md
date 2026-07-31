@@ -5,7 +5,7 @@ install** from a GitHub clone if you want to edit SEALS (or hazelbean) and have
 your edits take effect immediately.
 
 SEALS is distributed as **`sealsmodel`** and imported as `seals`. It requires
-hazelbean 1.9.0 or later.
+hazelbean 2.0.0 or later.
 
 ## 1. Install Miniforge/Conda
 
