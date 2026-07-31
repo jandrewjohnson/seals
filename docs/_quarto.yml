@@ -26,6 +26,7 @@ book:
     - quickstart.qmd
     - walkthrough.qmd
     - scenarios_format.md
+    - release_notes.qmd
     - part: "Coupling SEALS to other models"
       chapters:
         - magpie.qmd
