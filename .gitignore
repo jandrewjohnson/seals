@@ -368,3 +368,7 @@ tests/optional_test_data
 
 *.png
 .DS_Store
+
+# Quarto book build output for the SEALS User Guide.
+# The website re-renders the guide from docs/*.qmd; the PDF is a build artifact.
+HTML_seals_user_guide/

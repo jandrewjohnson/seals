@@ -8,7 +8,7 @@ this page documents their columns.
 
 > **This is the v1 schema — the one the code reads today.** A **v2 schema** is
 > specified in
-> [scenario_definitions.qmd](https://justinandrewjohnson.com/earth_economy_devstack/scenario_definitions.qmd)
+> [scenario_definitions.qmd](https://justinandrewjohnson.com/earth_economy_devstack/scenario_definitions.html)
 > and no code implements it yet. v2 fixes several structural problems in v1: it
 > replaces `baseline_reference_label` / `comparison_counterfactual_labels` /
 > per-model time columns with a `observed_reference_label` / `compared_to` /

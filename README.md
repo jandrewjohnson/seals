@@ -4,10 +4,11 @@ SEALS (Spatial Economic Allocation Landscape Simulator) downscales coarse or
 regional land-use change projections to fine-resolution LULC maps — 300 m
 globally in about an hour on a laptop.
 
-See the [SEALS documentation](https://justinandrewjohnson.com/earth_economy_devstack/seals_overview.html)
-for the model itself, and the
-[run-file conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html)
-for how run files are structured across the Earth-Economy Devstack.
+The **[SEALS User Guide](docs/index.qmd)** in `docs/` is the full documentation —
+install, quickstart, a guided first run, the scenarios CSV reference, and MAgPIE
+coupling. It renders as a website and as a single PDF. For how run files are
+structured across the Earth-Economy Devstack, see the
+[run-file conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html).
 
 ---
 
@@ -48,7 +49,7 @@ python run_seals_standard.py
 Outputs do **not** land in the repo. Because the run file lives inside a cloned
 repo, ProjectFlow places the project directory just outside it, at
 `~/Files/seals/projects/seals_standard/`, containing `input/`, `intermediate/`,
-`outputs/`, and one folder per task. Missing base data is downloaded on demand.
+`output/`, and one folder per task. Missing base data is downloaded on demand.
 
 Run it a second time and it finishes almost immediately — every task is behind an
 existence check, so completed work is skipped.
