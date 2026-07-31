@@ -1,0 +1,48 @@
+project:
+  type: book
+  output-dir: ../HTML_seals_user_guide
+
+# This config is deliberately NOT copied to the website. The website build
+# (website_dev/scripts/render_and_publish_full_website.py) copies only
+# .qmd/.md/.ipynb/.png, so these same chapter files are re-rendered there under
+# the site's own navigation. One source, two renderings, no fork.
+
+book:
+  title: "SEALS User Guide"
+  subtitle: "Spatial Economic Allocation Landscape Simulator"
+  author: "Justin Andrew Johnson"
+  date: today
+  page-navigation: true
+  search: true
+  repo-actions: [source, issue]
+  repo-subdir: docs
+  # Quarto's book-native download button. format-links is a *website* option and
+  # produces nothing in a book; downloads: puts a PDF icon in the sidebar header.
+  downloads: [pdf]
+  repo-url: https://github.com/jandrewjohnson/seals_dev
+  chapters:
+    - index.qmd
+    - environment_setup.md
+    - quickstart.qmd
+    - walkthrough.qmd
+    - scenarios_format.md
+    - release_notes.qmd
+    - part: "Coupling SEALS to other models"
+      chapters:
+        - magpie.qmd
+        - magpie_tutorial.qmd
+
+# walkthrough_marked.qmd is deliberately absent: it is a generated revealjs deck
+# (see the *_marked.qmd convention in the devstack conventions page), not a chapter.
+
+format:
+  html:
+    theme: yeti
+    toc: true
+    code-copy: true
+  pdf:
+    documentclass: scrreprt
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    colorlinks: true

@@ -1,0 +1,68 @@
+# What SEALS is
+
+SEALS, the Spatial Economic Allocation Landscape Simulator, is a land-use change
+model that downscales predictions of land-use change from aggregate (regional or
+coarse-gridded) inputs to a finer resolution, typically 10–300 meters.
+
+Its primary comparative advantage is fast computation. It downscales to 300
+meters globally — roughly 8.4 billion grid cells — in about an hour on a laptop.
+It is designed with parallelization in mind and so scales well to
+high-performance, cloud, or distributed computing. Performance-critical functions
+are written in C++ (via Cython); everything else is Python.
+
+SEALS is one of three software products maintained by NatCap TEEMs (The
+Earth-Economy Modellers):
+
+| product | what it is |
+|---------|------------|
+| **SEALS** | this model — the downscaler |
+| **GTAP-InVEST** | the coupled economy–ecosystem model that uses SEALS for its land-use step |
+| **Earth-Economy Devstack** | the shared platform: hazelbean, ProjectFlow, and the conventions all three follow |
+
+## How to read this guide
+
+Start at [Environment Setup](environment_setup.md) and
+[Quickstart](quickstart.qmd) — together they take you from nothing to a
+downscaled map. Then:
+
+- **[Walkthrough](walkthrough.qmd)** — a guided first run, and the anatomy of a
+  run file. Read this before you start a project of your own.
+- **[scenarios.csv format](scenarios_format.md)** — the column reference for the
+  file that defines what SEALS runs.
+- **[MAgPIE](magpie.qmd)** and the
+  **[MAgPIE tutorial](magpie_tutorial.qmd)** — coupling SEALS to an
+  external land-use model, which is also the general pattern for coupling it to
+  any coarse projection source.
+
+This guide is rendered both as a website and as a single PDF
+([download](SEALS-User-Guide.pdf)). If you are reading the PDF, links to the other
+two products point at the published site.
+
+## Where SEALS ends and the platform begins
+
+SEALS is a model. The machinery that runs it — project directories, task trees,
+skip-if-already-computed re-runs, automatic base-data download — is
+**ProjectFlow**, which lives in hazelbean and is shared across all three
+products. This guide covers SEALS and says only as much about ProjectFlow as you
+need to run it.
+
+For the platform itself, see the Earth-Economy Devstack documentation:
+
+- [Conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html)
+  — the run-file spec, naming rules, and directory layout
+- [Project complexity](https://justinandrewjohnson.com/earth_economy_devstack/project_complexity.html)
+  — the three axes that describe how a run file is organized, and why
+- [ProjectFlow](https://justinandrewjohnson.com/earth_economy_devstack/project_flow.html)
+  — the task-tree engine
+- [Installation](https://justinandrewjohnson.com/earth_economy_devstack/installation.html)
+  — devstack-wide install options, including the developer install
+
+## Status and citation
+
+SEALS is under active development and changes rapidly. Pull the latest
+[`seals_dev`](https://github.com/jandrewjohnson/seals_dev) before reporting a
+problem.
+
+The model was introduced alongside GTAP-InVEST in
+[Johnson et al. 2023, PNAS](https://www.pnas.org/doi/10.1073/pnas.2220401120).
+All code is available under a permissive open-source license.
