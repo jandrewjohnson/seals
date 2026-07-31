@@ -372,3 +372,9 @@ tests/optional_test_data
 # Quarto book build output for the SEALS User Guide.
 # The website re-renders the guide from docs/*.qmd; the PDF is a build artifact.
 HTML_seals_user_guide/
+
+# Data folders — ProjectFlow writes these beside the checkout, not inside it.
+# Root-anchored so the archived seals/old_run_files/input/ stays tracked.
+/input/
+/intermediate/
+/output/
