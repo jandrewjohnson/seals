@@ -19,7 +19,7 @@ book:
   # Quarto's book-native download button. format-links is a *website* option and
   # produces nothing in a book; downloads: puts a PDF icon in the sidebar header.
   downloads: [pdf]
-  repo-url: https://github.com/jandrewjohnson/seals_dev
+  repo-url: https://github.com/jandrewjohnson/seals
   chapters:
     - index.qmd
     - environment_setup.md
@@ -31,6 +31,9 @@ book:
       chapters:
         - magpie.qmd
         - magpie_tutorial.qmd
+    - part: "Worked examples"
+      chapters:
+        - kenya_worked_example.qmd
 
 # walkthrough_marked.qmd is deliberately absent: it is a generated revealjs deck
 # (see the *_marked.qmd convention in the devstack conventions page), not a chapter.

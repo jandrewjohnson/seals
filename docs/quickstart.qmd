@@ -1,30 +1,13 @@
 # Quickstart
 
-Get SEALS running, then make it your own. For the model itself see
-[SEALS](index.qmd); for the full install options see
-[Installation Steps](https://justinandrewjohnson.com/earth_economy_devstack/installation.html).
+Get SEALS running, then make it your own. This picks up where
+[Installation](environment_setup.md) leaves off — it assumes you have an
+activated environment with `hazelbean` from conda-forge and SEALS editable-installed
+from your clone. For what the model actually does, see [Introduction](index.qmd).
 
-## 1. Install
+## 1. Run it
 
-SEALS is distributed as `sealsmodel` and imported as `seals`. It needs
-[hazelbean](https://github.com/jandrewjohnson/hazelbean_dev), which supplies
-`ProjectFlow`.
-
-``` bash
-conda create -n <your_env> python=3.10
-conda activate <your_env>
-pip install hazelbean sealsmodel
-```
-
-Pick your own environment name. If you intend to edit SEALS rather than just run
-it, do a developer install from a clone instead — see
-[environment_setup.md](environment_setup.md)
-in the seals repo, which also covers the C/C++ compiler SEALS needs to build its
-Cython extension.
-
-## 2. Run it
-
-Two run files ship with SEALS, in `seals_dev/seals/`:
+Two run files ship with SEALS, in `seals/seals/`:
 
 | file | what it runs |
 |------|--------------|
@@ -35,14 +18,14 @@ Start with the test:
 
 ``` bash
 conda activate <your_env>
-cd seals_dev/seals
+cd seals/seals
 python run_seals_standard_test.py
 ```
 
 Required base data is downloaded at runtime from a public bucket; no credentials
 are needed for the default configuration.
 
-## 3. Where the output goes
+## 2. Where the output goes
 
 Not into the repo. Because the run file lives inside a cloned repo, ProjectFlow
 places the project directory just *outside* it:
@@ -59,7 +42,7 @@ task is behind an existence check, so completed work is skipped. That is the mai
 thing ProjectFlow buys you: interrupt a long run, fix one input, re-run, and only
 what is missing recomputes.
 
-## 4. Make it your own
+## 3. Make it your own
 
 Copy the run file into your own project repo as `run_<project>.py` and change the
 two lines in its `__main__` block — that is the whole of the configuration:

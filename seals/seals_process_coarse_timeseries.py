@@ -1004,7 +1004,10 @@ classification to the the destination classification, potentially aggregating cl
                     #l /Users/jajohns/Files/seals/projects/standard/intermediate/coarse_change/coarse_simplified_proportion/baseline/luh2-message/2017/urban_prop_baseline_luh2-message_2017.tif
 
 
-                    dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, str(year))
+                    # Baseline rows carry no climate_label (it is blank in
+                    # scenario_definitions), so it is omitted here to match the
+                    # layout documented above and the filenames written below.
+                    dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year))
                     hb.create_directories(dst_dir)
 
 
@@ -1140,8 +1143,10 @@ def coarse_simplified_ha(p):
                     p.base_years = [p.seals_key_base_year[0]]
 
                 for year in p.base_years:
-                    src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, str(year))
-                    dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, str(year))
+                    # As above: baseline rows have no climate_label, and the
+                    # filenames below already omit it.
+                    src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.model_label, str(year))
+                    dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year))
 
                     for class_c, class_label in enumerate(p.changing_class_labels):
                         dst_path = os.path.join(dst_dir, str(class_label) + '_ha_' + p.exogenous_label + '_' + p.model_label + '_' + str(year) + '.tif')
@@ -1314,7 +1319,6 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                     baseline_reference_row = p.scenarios_df.loc[p.scenarios_df['scenario_label'] == baseline_reference_label]
                     baseline_exogenous_label = baseline_reference_row['exogenous_label'].values[0]
                     baseline_reference_model = baseline_reference_row['model_label'].values[0]
-                    baseline_reference_climate = baseline_reference_row['climate_label'].values[0]
 
 
                     current_starting_year = None
@@ -1343,7 +1347,9 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                                 base_year = int(row['key_base_year'])
                             current_starting_year = base_year
                         if previous_year is None:
-                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_climate, baseline_reference_model, str(current_starting_year))
+                            # This points into the baseline tree, which carries no
+                            # climate_label - matching the filename built below.
+                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
                             current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(current_starting_year) + '.tif')
                         else:
 

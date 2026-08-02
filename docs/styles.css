@@ -1,0 +1,5 @@
+/* Styles for the walkthrough revealjs deck.
+ *
+ * walkthrough_marked.qmd declares `css: styles.css` but the file was never
+ * committed, so the deck referenced a missing stylesheet. Intentionally
+ * minimal: the place for slide overrides on top of the simple theme. */

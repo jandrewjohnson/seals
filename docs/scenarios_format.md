@@ -1,8 +1,8 @@
-# scenarios.csv Format (v1)
+# Scenario Iteration
 
 The scenarios CSV defines your SEALS scenarios. Each row is one scenario. The
 tracked copies that ship with SEALS are
-[`seals/input_template/standard_scenarios.csv`](../seals/input_template/standard_scenarios.csv)
+[`seals/input_template/standard_scenarios.csv`](https://github.com/jandrewjohnson/seals/blob/main/seals/input_template/standard_scenarios.csv)
 (three scenarios) and `standard_scenarios_test.csv` (a pared two-row version);
 this page documents their columns.
 

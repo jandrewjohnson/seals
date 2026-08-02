@@ -1,4 +1,4 @@
-# seals_dev
+# seals
 
 SEALS — spatial land-use/land-cover change allocation model. Part of the
 earth-economy devstack; builds on the shared **hazelbean** base library

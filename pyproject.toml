@@ -2,7 +2,9 @@
 name = "sealsmodel"
 description = "Land-use change model and downscaler"
 readme = "README.md"
-requires-python = ">=3.6"
+# Floor set by hazelbean, which requires >=3.10 (NumPy 2 dropped 3.9). Declaring
+# anything lower here lets pip resolve an install that cannot import.
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 maintainers = [
         {name = "Justin Andrew Johnson"}
@@ -23,7 +25,7 @@ dependencies = ["hazelbean>=2.0.0"]
 dynamic = ["version"]
 
 [project.urls]
-repository = "https://github.com/jandrewjohnson/seals_dev"
+repository = "https://github.com/jandrewjohnson/seals"
 
 [build-system]
 requires = [
@@ -44,3 +46,9 @@ local_scheme = "node-and-date"
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["seals_tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["seals_tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
