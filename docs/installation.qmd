@@ -1,19 +1,6 @@
 # Installation
 
-SEALS is installed one way: **hazelbean and the geospatial stack from
-conda-forge, then SEALS itself as an editable install from a clone.** Your edits
-to the clone take effect immediately, with no reinstall.
-
-SEALS is distributed as **`sealsmodel`** and imported as `seals`. It requires
-hazelbean 2.0.0 or later. Do not pin a Python version — let conda pick one. On
-conda-forge, hazelbean 2.0.0 is built for Python 3.11, 3.12 and 3.13, and asking
-for an older Python makes the solver quietly fall back to hazelbean 1.x, which
-SEALS cannot run.
-
-Only SEALS is cloned. Hazelbean is a normal conda-forge dependency here — if you
-also want to *edit* hazelbean, that is the devstack developer install, covered in
-the [devstack installation guide](https://justinandrewjohnson.com/earth_economy_devstack/installation.html),
-which documents the full set of install paths across the stack.
+SEALS is installed directly from the Git repository as an *editable install* in a conda environment. 
 
 ## 1. Install git and Miniforge/Conda
 
@@ -22,9 +9,6 @@ If not already installed:
 - **git** — <https://git-scm.com/downloads>. The install starts from a clone.
 - **Miniforge** — <https://github.com/conda-forge/miniforge>. Install for your
   user account only, and accept the option to add it to your `PATH`.
-
-Miniforge ships `mamba` as well as `conda`; the commands below use `mamba` for
-installs because conda's solver is very slow on the geospatial stack.
 
 ## 2. Install a C/C++ compiler
 
@@ -57,18 +41,15 @@ it is where hazelbean, GDAL, NumPy and the rest of the geospatial stack come
 from, as conda builds rather than pip wheels:
 
 ```bash
-mamba install hazelbean cython libgdal-hdf5
+conda install hazelbean cython libgdal-hdf5
 ```
 
 This may take 5–10 minutes.
 
 ## 5. Clone SEALS into the devstack layout
 
-The repo lives in its own project folder under `~/Files/`
-(`C:\Users\<you>\Files\` on Windows). The layout matters: ProjectFlow infers
-where to put project directories from it, placing them at
-`~/Files/seals/projects/<project_name>/` — outside the repo, so outputs never
-land in your working tree.
+You may clone SEALS wherever you want, however documentation here assumes the repo lives in its own project folder under `~/Files/`
+(`C:\Users\<you>\Files\` on Windows). The command below clones it into a `seals` subfolder in files.
 
 ```bash
 mkdir -p ~/Files/seals && cd ~/Files/seals
@@ -76,6 +57,8 @@ git clone https://github.com/jandrewjohnson/seals.git
 ```
 
 ## 6. Make the editable install
+
+Note that the second `seals` is the actual repository. Projects will and all written files will go in the first `seals`.
 
 ```bash
 cd ~/Files/seals/seals
@@ -87,20 +70,7 @@ only runtime dependency, and you already have it from step 4. Letting pip resolv
 dependencies again tends to replace conda's builds of the geospatial stack (GDAL
 and friends) with incompatible wheels.
 
-## 7. Verify
-
-```bash
-python -c "import seals; print(seals.__file__)"
-```
-
-The path should point inside `~/Files/seals/seals/`, not into `site-packages`. If
-it points at `site-packages`, an installed copy is shadowing your clone — remove
-it and redo the editable install.
-
-Hazelbean, by contrast, *should* resolve to `site-packages` here: it came from
-conda-forge, and that is correct for this install.
-
-## 8. Add other devstack repos (optional)
+## 8. Other devstack repos (optional)
 
 The same clone-and-editable-install pattern works for the rest of the stack, each
 in its own `~/Files/<name>/` project folder:

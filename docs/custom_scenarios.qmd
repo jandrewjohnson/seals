@@ -1,4 +1,4 @@
-# Scenario Iteration
+# Custom Scenarios
 
 The scenarios CSV defines your SEALS scenarios. Each row is one scenario. The
 tracked copies that ship with SEALS are

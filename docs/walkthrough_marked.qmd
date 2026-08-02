@@ -14,7 +14,7 @@ format:
         width: 1920
         height: 1080
 ---
-# First SEALS run walkthrough
+# Walkthrough
 
 ## Getting set up
 
@@ -176,7 +176,7 @@ p.scenario_definitions_filename = 'standard_scenarios.csv'
 - `bau` — business-as-usual, being deprecated in favour of `baseline`; it still
   appears in shipped CSVs
 - Full column reference:
-  [scenarios_format.md](scenarios_format.md)
+  [Custom scenarios](custom_scenarios.qmd)
 :::
 
 ## Automatically downloading data

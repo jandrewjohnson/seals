@@ -62,7 +62,7 @@ Put your scenarios CSV in an `input_template/` directory beside the run file. It
 is tracked in git, and ProjectFlow copies anything missing into the project's
 untracked `input/` on first run without ever overwriting your working copy. The
 columns are documented in
-[scenarios_format.md](scenarios_format.md).
+[Custom scenarios](custom_scenarios.qmd).
 
 To run the same pipeline a second way — a smoke test, a different AOI — write a
 *second run file* that imports the first rather than copying it.

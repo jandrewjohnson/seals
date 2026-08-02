@@ -1,20 +1,11 @@
-# First SEALS run walkthrough
+# Walkthrough
 
 ## Getting set up
 
-- Follow the [installation](installation.qmd) page first, or the shorter
-  [quickstart](quickstart.qmd) if you just want to run the model
-- Clone SEALS into the devstack layout — its own project folder under
-  `~/Files/`, at `~/Files/seals/seals`. Hazelbean is not cloned; it comes from
-  conda-forge
-- The layout is not cosmetic: ProjectFlow reads it to decide where project
-  directories go
-- You know the install worked if this prints a path inside `~/Files/`, not
-  inside `site-packages`:
-
-``` bash
-python -c "import seals; print(seals.__file__)"
-```
+- Follow the [installation](installation.qmd) page first. 
+- This guide assumes you installed SEALS using the devstack layout — its own project folder under
+  `~/Files/`, with the repo inside it at `~/Files/seals/seals`. 
+  
 
 ## Explore the SEALS code
 
@@ -141,13 +132,15 @@ p.scenario_definitions_filename = 'standard_scenarios.csv'
 - `bau` — business-as-usual, being deprecated in favour of `baseline`; it still
   appears in shipped CSVs
 - Full column reference:
-  [scenarios_format.md](scenarios_format.md)
+  [Custom scenarios](custom_scenarios.qmd)
 
 ## Automatically downloading data
 
 - Paths in the CSV are **ref_paths** — relative locations resolved by
   `p.get_path()`, which searches the project `input/` dir, then `base_data`, then
   a cloud bucket, downloading what is missing
+- NOTE: The first run downloads a lot of data. The default bucket is public and
+  requires no credentials, but it is large and the download may take hours. Also note that you may need to restart the run file after it all downloads.
 - `p.base_data_dir` is where those downloads land. Point it somewhere with room
   for very large files; the same base data serves every project
 - The directory must be named `base_data` to match the bucket convention
@@ -187,6 +180,5 @@ lulc_esa_seals7_ssp2_rcp45_luh2-message_bau_2030.tif
 
 ## Next
 
-- [Quickstart](quickstart.qmd) — the condensed version of this page
-- [Conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html) — the full run-file rules
-- [Project complexity](https://justinandrewjohnson.com/earth_economy_devstack/project_complexity.html) — why run files are shaped this way
+SEALS is customized be adding or changing scenarios in the scenarios CSV. See [Custom scenarios](custom_scenarios.qmd) for the rules and conventions.
+

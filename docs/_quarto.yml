@@ -25,15 +25,15 @@ book:
     - installation.qmd
     - quickstart.qmd
     - walkthrough.qmd
-    - scenarios_format.md
-    - release_notes.qmd
-    - part: "Coupling SEALS to other models"
+    - custom_scenarios.qmd
+    - part: "Model Coupling"
       chapters:
         - magpie.qmd
         - magpie_tutorial.qmd
     - part: "Worked examples"
       chapters:
         - kenya_worked_example.qmd
+    - release_notes.qmd
 
 # walkthrough_marked.qmd is deliberately absent: it is a generated revealjs deck
 # (see the *_marked.qmd convention in the devstack conventions page), not a chapter.

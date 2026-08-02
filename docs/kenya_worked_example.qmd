@@ -16,8 +16,8 @@ module it used have since been retired to `seals/seals/old_run_files/` and are
 no longer supported. Run files have also moved to the `run_project(p)` convention
 since this was written, so the code shown here will not match what is in the repo.
 
-For a current walkthrough see [SEALS Quickstart](quickstart.qmd) and
-[First SEALS run walkthrough](walkthrough.qmd).
+For a current walkthrough see [Quickstart](quickstart.qmd) and
+[Walkthrough](walkthrough.qmd).
 :::
 
 ## Overview
