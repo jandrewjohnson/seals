@@ -1,7 +1,7 @@
 # Quickstart
 
 Get SEALS running, then make it your own. This picks up where
-[Installation](environment_setup.md) leaves off — it assumes you have an
+[Installation](installation.qmd) leaves off — it assumes you have an
 activated environment with `hazelbean` from conda-forge and SEALS editable-installed
 from your clone. For what the model actually does, see [Introduction](index.qmd).
 

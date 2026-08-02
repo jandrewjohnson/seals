@@ -31,7 +31,7 @@ This walkthrough guides you through installing, configuring, and running the DEM
 ## Installation
 
 The steps below are the SEALS install applied to this example. For the canonical
-version, see [Installation](environment_setup.md); for the devstack-wide options,
+version, see [Installation](installation.qmd); for the devstack-wide options,
 see the [devstack installation guide](https://justinandrewjohnson.com/earth_economy_devstack/installation.html).
 
 ::: {.callout-note collapse="true"}
@@ -53,7 +53,8 @@ Hazelbean is the core dependency for running SEALS. Install it with these comman
 conda init
 
 # Create a new environment (pick your own name in place of <your_env>)
-conda create -n <your_env> python=3.10
+# No Python version: conda picks one hazelbean is built for in the next step
+conda create -n <your_env>
 
 # Activate the environment
 conda activate <your_env>

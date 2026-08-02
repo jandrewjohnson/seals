@@ -21,7 +21,7 @@ Earth-Economy Modellers):
 
 ## How to read this guide
 
-Start at [Installation](environment_setup.md) and
+Start at [Installation](installation.qmd) and
 [Quickstart](quickstart.qmd) — together they take you from nothing to a
 downscaled map. Then:
 

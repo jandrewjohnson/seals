@@ -5,8 +5,10 @@ conda-forge, then SEALS itself as an editable install from a clone.** Your edits
 to the clone take effect immediately, with no reinstall.
 
 SEALS is distributed as **`sealsmodel`** and imported as `seals`. It requires
-hazelbean 2.0.0 or later and Python 3.10 or later (hazelbean's floor, set by
-NumPy 2).
+hazelbean 2.0.0 or later. Do not pin a Python version — let conda pick one. On
+conda-forge, hazelbean 2.0.0 is built for Python 3.11, 3.12 and 3.13, and asking
+for an older Python makes the solver quietly fall back to hazelbean 1.x, which
+SEALS cannot run.
 
 Only SEALS is cloned. Hazelbean is a normal conda-forge dependency here — if you
 also want to *edit* hazelbean, that is the devstack developer install, covered in
@@ -38,12 +40,15 @@ installed from source, so **a C/C++ compiler is required** — see
 ## 3. Create and activate an environment
 
 ```bash
-conda create -n <your_env> python=3.10
+conda create -n <your_env>
 conda activate <your_env>
 ```
 
 Pick your own environment name — the devstack does not require a particular one.
 Always activate it before running SEALS scripts.
+
+The environment starts empty; Python arrives in step 4 as a dependency of
+hazelbean, at a version conda knows hazelbean was built for.
 
 ## 4. Install hazelbean and the dependency stack from conda-forge
 

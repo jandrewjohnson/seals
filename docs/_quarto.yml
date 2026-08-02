@@ -22,7 +22,7 @@ book:
   repo-url: https://github.com/jandrewjohnson/seals
   chapters:
     - index.qmd
-    - environment_setup.md
+    - installation.qmd
     - quickstart.qmd
     - walkthrough.qmd
     - scenarios_format.md

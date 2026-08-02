@@ -19,7 +19,7 @@ format:
 ## Getting set up
 
 ::: r-fit-text
-- Follow the [installation](environment_setup.md) page first, or the shorter
+- Follow the [installation](installation.qmd) page first, or the shorter
   [quickstart](quickstart.qmd) if you just want to run the model
 - Clone SEALS into the devstack layout — its own project folder under
   `~/Files/`, at `~/Files/seals/seals`. Hazelbean is not cloned; it comes from

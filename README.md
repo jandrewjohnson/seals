@@ -4,17 +4,17 @@ SEALS (Spatial Economic Allocation Landscape Simulator) downscales coarse or
 regional land-use change projections to fine-resolution LULC maps — 300 m
 globally in less than 30 minutes on a laptop.
 
-The **[SEALS User Guide](docs/index.qmd)** in `docs/` is the full documentation —
+The **[SEALS User Guide](docs/index.qmd)** and all documentation are in  `docs/`, including pages for
 install, quickstart, a guided first run, the scenarios CSV reference, and several 
-model linkage exercises. It renders as a website (hosted at <https://justinandrewjohnson.com/seals/>), or as a single PDF. 
----
+model linkage exercises. It renders as a website (hosted at <https://justinandrewjohnson.com/seals/>), or as a single PDF in this repo.. 
+
 
 ## Install
 
 1. First install Hazelbean via condaforge
 
 ```bash
-conda create -n <your_env> python=3.10
+conda create -n <your_env>
 conda activate <your_env>
 conda install hazelbean
 ```
@@ -32,7 +32,7 @@ pip install -e . --no-deps
 ```
 
 `--no-deps` assumes the dependencies are already in the environment from conda;
-see [docs/environment_setup.md](docs/environment_setup.md) for the full sequence.
+see [docs/installation.qmd](docs/installation.qmd) for the full sequence.
 Note that running SEALS on a Windows PC requires having a C/C++ compiler installed, which is described in more details on the installation page.
 
 ## Run it
