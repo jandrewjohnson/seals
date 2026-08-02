@@ -6,10 +6,12 @@ globally in less than 30 minutes on a laptop.
 
 The **[SEALS User Guide](docs/index.qmd)** and all documentation are in  `docs/`, including pages for
 install, quickstart, a guided first run, the scenarios CSV reference, and several 
-model linkage exercises. It renders as a website (hosted at <https://justinandrewjohnson.com/seals/>), or as a single PDF in this repo.. 
+model linkage exercises. It renders as a website (hosted at <https://justinandrewjohnson.com/seals/>), or as a single PDF in this repo.
 
 
-## Install
+## Install Summary
+
+See [docs/installation.qmd](docs/installation.qmd) for detailed instructions.
 
 1. First install Hazelbean via condaforge
 
@@ -31,8 +33,7 @@ git clone https://github.com/jandrewjohnson/seals
 pip install -e . --no-deps
 ```
 
-`--no-deps` assumes the dependencies are already in the environment from conda;
-see [docs/installation.qmd](docs/installation.qmd) for the full sequence.
+`--no-deps` assumes the dependencies are already in the environment from conda. 
 Note that running SEALS on a Windows PC requires having a C/C++ compiler installed, which is described in more details on the installation page.
 
 ## Run it
