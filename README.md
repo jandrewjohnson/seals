@@ -4,9 +4,8 @@ SEALS (Spatial Economic Allocation Landscape Simulator) downscales coarse or
 regional land-use change projections to fine-resolution LULC maps — 300 m
 globally in less than 30 minutes on a laptop.
 
-The **[SEALS User Guide](docs/index.qmd)** and all documentation are in  `docs/`, including pages for
-install, quickstart, a guided first run, the scenarios CSV reference, and several 
-model linkage exercises. It renders as a website (hosted at <https://justinandrewjohnson.com/seals/>), or as a single PDF in this repo.
+All documentation are generated from QMDs in  `docs/` and are hosted at the [Seals Homepage](https://justinandrewjohnson.com/seals/), including install, quickstart, a guided first run, the scenarios CSV reference, and several 
+model linkage exercises. 
 
 
 ## Install Summary
@@ -44,8 +43,7 @@ cd seals/seals
 python run_seals_standard.py
 ```
 
-Outputs do **not** land in the repo. Because the run file lives inside a cloned
-repo, ProjectFlow places the project directory just outside it, at
+Outputs land in a Project file just outside of the repo, e.g. at 
 `~/Files/seals/projects/seals_standard/`, containing `input/`, `intermediate/`,
 `output/`, and one folder per task. Missing base data is downloaded on demand.
 
