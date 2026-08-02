@@ -1,16 +1,16 @@
 # SEALS
 
 SEALS (Spatial Economic Allocation Landscape Simulator) downscales coarse or
-regional land-use change projections to fine-resolution LULC maps — 300 m
+regional land-use change projections to fine-resolution (300 meter) LULC maps
 globally in less than 30 minutes on a laptop.
 
-All documentation are generated from QMDs in  `docs/` and are hosted at the [Seals Homepage](https://justinandrewjohnson.com/seals/), including install, quickstart, a guided first run, the scenarios CSV reference, and several 
+All documentation are generated from QMDs in  `docs/` and are hosted at the [Seals Homepage](https://justinandrewjohnson.com/seals/), and the [User Guide](https://justinandrewjohnson.com/seals/user_guide/index.html), which includes pages for installation , quickstart, a guided first run, the scenarios CSV reference, and several 
 model linkage exercises. 
 
 
 ## Install Summary
 
-See [docs/installation.qmd](docs/installation.qmd) for detailed instructions.
+See [Installation](https://justinandrewjohnson.com/seals/user_guide/installation.html) for detailed instructions.
 
 1. First install Hazelbean via condaforge
 
