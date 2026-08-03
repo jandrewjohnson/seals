@@ -2351,8 +2351,31 @@ def allocation(passed_p=None):
                     else:
                         projected_coarse_change_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, p.coarse_blocks_list).astype(np.float64)
 
-            # Note questionable choice here that the actual calibration parameters must be the last n-classes of columns
-            p.seals_class_names = spatial_regressors_df.columns.values[-len(changing_class_indices_array):]
+            # Select the per-class coefficient columns by NAME. Taking the last n columns
+            # positionally breaks whenever the table carries a trailing column after them: a
+            # combined trained-coefficients file ends with calibration_block_index, so the
+            # matrix shifted by one class and the last class received the block index, which
+            # float() parses via underscore separators ('129_88_1_1' -> 1298811.0) instead of
+            # raising. Tables name these columns either '<label>' or 'class_<label>', so match
+            # either convention and keep the positional form only as a fallback.
+            _cols = list(spatial_regressors_df.columns)
+            _plain = [str(l) for l in p.changing_class_labels]
+            _pref = ['class_' + str(l) for l in p.changing_class_labels]
+            if all(c in _cols for c in _pref):
+                p.seals_class_names = np.asarray(_pref)
+            elif all(c in _cols for c in _plain):
+                p.seals_class_names = np.asarray(_plain)
+            else:
+                # Neither naming convention matched, e.g. labels held as integer codes. The
+                # positional form is only safe when the class columns are last, so say so
+                # loudly rather than allocating on a silently shifted matrix.
+                p.seals_class_names = spatial_regressors_df.columns.values[-len(changing_class_indices_array):]
+                hb.log('WARNING: could not match per-class coefficient columns by name for labels '
+                       + str(list(p.changing_class_labels)) + '; falling back to the last '
+                       + str(len(changing_class_indices_array)) + ' columns ' + str(list(p.seals_class_names))
+                       + '. Verify these are the per-class columns: a trailing column such as '
+                       + 'calibration_block_index shifts every class by one and does NOT raise, '
+                       + "because float() parses '0_18_1_1' as 1811.0.")
             spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].values.astype(np.float64).T
             generation_best_parameters = np.copy(spatial_regressor_trained_coefficients)
 
