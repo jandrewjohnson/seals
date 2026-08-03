@@ -2376,7 +2376,11 @@ def allocation(passed_p=None):
                        + '. Verify these are the per-class columns: a trailing column such as '
                        + 'calibration_block_index shifts every class by one and does NOT raise, '
                        + "because float() parses '0_18_1_1' as 1811.0.")
-            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].values.astype(np.float64).T
+            # astype(np.float64) is not a guard here: numpy accepts PEP 515 underscore
+            # separators, so a mis-selected column of block keys converts silently
+            # ('106_84_1_1' -> 1068411.0) and the run completes on values that look like
+            # coefficients. pd.to_numeric raises, so a wrong column selection fails at load.
+            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].apply(pd.to_numeric).values.astype(np.float64).T
             generation_best_parameters = np.copy(spatial_regressor_trained_coefficients)
 
             p.call_string = ''
