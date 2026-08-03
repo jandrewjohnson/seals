@@ -223,7 +223,7 @@ def combined_trained_coefficients(p):
 
     calibration_dir = os.path.join(extraction_dir, 'intermediate', 'calibration')
 
-    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + ' .csv')
+    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + '.csv')
 
     if p.run_this:
 
@@ -250,7 +250,7 @@ def combined_trained_coefficients(p):
             df = pd.concat(list_of_dfs, axis=0, ignore_index=True)
 
             hb.log('extract_calibration_from_project() found ' + str(len(extant_block_calibration_paths)) + ' calibration files.')
-            df.to_excel(p.combined_calibration_file_path)
+            df.to_csv(p.combined_calibration_file_path)
 
 
 
@@ -961,6 +961,28 @@ def calibration_zones(passed_p=None):
 
         # For now, i chose to just start with the gtap values so that i don't have to create a newly build right-size spreadsheet
         spatial_regressor_starting_coefficients_read = pd.read_csv(starting_coefficients_path, index_col=0)
+
+        # brazil_net_zero WARM-START (guarded): if p.warm_start_coefficients_path is set, seed this tile's
+        # starting coefficients from its per-tile global coeffs (matched by calibration_block_index and
+        # spatial_regressor_name) instead of the default structured prior. Default (attr unset/None) leaves
+        # behavior byte-identical to stock SEALS.
+        _ws_path = getattr(p, 'warm_start_coefficients_path', None)
+        if _ws_path and hb.path_exists(_ws_path):
+            _ws_tile = os.path.basename(os.path.dirname(p.cur_dir))
+            _ws_blk = _ws_tile + '_' + str(int(p.processing_resolution)) + '_' + str(int(p.processing_resolution))
+            _ws_df = pd.read_csv(_ws_path)
+            _ws_df = _ws_df[_ws_df['calibration_block_index'].astype(str) == _ws_blk].drop_duplicates('spatial_regressor_name')
+            if len(_ws_df):
+                _ws_df = _ws_df.set_index('spatial_regressor_name')
+                _ws_cls = [c for c in spatial_regressor_starting_coefficients_read.columns if str(c).startswith('class_')]
+                for _ws_rn in spatial_regressor_starting_coefficients_read.index:
+                    if _ws_rn in _ws_df.index:
+                        for _ws_c in _ws_cls:
+                            if _ws_c in _ws_df.columns:
+                                spatial_regressor_starting_coefficients_read.loc[_ws_rn, _ws_c] = _ws_df.loc[_ws_rn, _ws_c]
+                hb.log('WARM-START: seeded tile ' + _ws_tile + ' from global coeffs (block ' + _ws_blk + ')')
+            else:
+                hb.log('WARM-START: no global coeffs for block ' + _ws_blk + '; using default prior')
         # spatial_regressor_starting_coefficients_read = pd.read_csv(os.path.join(p.input_dir, 'spatial_regressor_starting_coefficients.csv'), index_col=0)
         # NZ_brazil fix: pad to len(p.class_labels) rows so the array aligns with the
         # (n_all x n_all) coarse_change_matrix at line 1011 and the Cython kernel's
