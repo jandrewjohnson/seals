@@ -991,7 +991,10 @@ def calibration_zones(passed_p=None):
         # (water, other) at their positions within p.all_class_indices. Default
         # ESA+LUH2 has the same 7-vs-5 split; this latent mismatch only fires on
         # fresh calibration since most users run allocation with bundled coefficients.
-        csv_coefs = spatial_regressor_starting_coefficients_read[p.seals_class_names].values.astype(np.float64).T  # shape (n_changing, n_regressors)
+        # pd.to_numeric rather than a bare astype: numpy accepts PEP 515 underscore separators,
+        # so a mis-selected column would convert silently ('106_84_1_1' -> 1068411.0) and the
+        # fitted coefficients would carry it. See the same guard in allocation().
+        csv_coefs = spatial_regressor_starting_coefficients_read[p.seals_class_names].apply(pd.to_numeric).values.astype(np.float64).T  # shape (n_changing, n_regressors)
         spatial_regressor_starting_coefficients = np.zeros((len(p.class_labels), csv_coefs.shape[1]), dtype=np.float64)
         all_idx_list = list(p.all_class_indices)
         for i, changing_idx in enumerate(p.changing_class_indices):
@@ -2376,7 +2379,11 @@ def allocation(passed_p=None):
                        + '. Verify these are the per-class columns: a trailing column such as '
                        + 'calibration_block_index shifts every class by one and does NOT raise, '
                        + "because float() parses '0_18_1_1' as 1811.0.")
-            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].values.astype(np.float64).T
+            # astype(np.float64) is not a guard here: numpy accepts PEP 515 underscore
+            # separators, so a mis-selected column of block keys converts silently
+            # ('106_84_1_1' -> 1068411.0) and the run completes on values that look like
+            # coefficients. pd.to_numeric raises, so a wrong column selection fails at load.
+            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].apply(pd.to_numeric).values.astype(np.float64).T
             generation_best_parameters = np.copy(spatial_regressor_trained_coefficients)
 
             p.call_string = ''
