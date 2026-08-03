@@ -2,7 +2,7 @@
 
 SEALS, the Spatial Economic Allocation Landscape Simulator, is a land-use change
 model that downscales predictions of land-use change from aggregate (regional or
-coarse-gridded) inputs to a finer resolution, typically 10–300 meters. See the [User Guide](https://justinandrewjohnson.com/seals/user_guide) for the full documentation.
+coarse-gridded) inputs to a finer resolution, typically 10–300 meters. 
 
 SEALS' primary comparative advantage is fast computation. It downscales to 300
 meters globally — roughly 8.4 billion grid cells — in about an hour on a laptop.
@@ -20,10 +20,8 @@ downscaled map. Then:
   run file. Read this before you start a project of your own.
 - **[Custom scenarios](custom_scenarios.qmd)** — the column reference for the
   scenarios CSV that defines what SEALS runs.
-- **[MAgPIE](magpie.qmd)** and the
-  **[MAgPIE tutorial](magpie_tutorial.qmd)** — coupling SEALS to an
-  external land-use model, which is also the general pattern for coupling it to
-  any coarse projection source.
+- **[MAgPIE](magpie.qmd)** — coupling SEALS to an external land-use model, which
+  is also the general pattern for coupling it to any coarse projection source.
 
 This guide is rendered both as a website and as a single PDF
 ([download](SEALS-User-Guide.pdf)). If you are reading the PDF, links to the other

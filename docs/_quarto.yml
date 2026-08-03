@@ -29,7 +29,6 @@ book:
     - part: "Model Coupling"
       chapters:
         - magpie.qmd
-        - magpie_tutorial.qmd
     - part: "Worked examples"
       chapters:
         - kenya_worked_example.qmd
