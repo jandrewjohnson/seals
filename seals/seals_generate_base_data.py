@@ -401,6 +401,32 @@ def lulc_convolutions(p):
 
 
 
+def build_change_class_adjacency_effects(all_class_labels, changing_class_labels):
+    """Prior weights for the class-convolution regressors.
+
+    Rows are all classes, columns are the changing classes. A class's own convolution
+    carries the strong weight, so expansion follows the existing edges of that class,
+    and urban additionally follows cropland edges. Classes that cannot change have no
+    column of their own and stay neutral across the row.
+
+    Built from the class lists rather than written out, so the prior holds for any
+    simplification scheme. For seals7 it reproduces the original hardcoded 7x5 matrix
+    exactly.
+    """
+    all_class_labels = list(all_class_labels)
+    changing_class_labels = list(changing_class_labels)
+
+    effects = [
+        [10 if label == changing_label else 1 for changing_label in changing_class_labels]
+        for label in all_class_labels
+    ]
+
+    if 'urban' in all_class_labels and 'cropland' in changing_class_labels:
+        effects[all_class_labels.index('urban')][changing_class_labels.index('cropland')] = 5
+
+    return effects
+
+
 def local_data_regressors_starting_values(p):
     """TODOO Note the very confusing partial duplication with the regressors_starting_values task defined above. THIS task is the one that is used in calibration."""
     p.local_data_regressors_starting_values_path = os.path.join(p.cur_dir, 'local_data_regressors_starting_values.csv')
@@ -452,20 +478,13 @@ def local_data_regressors_starting_values(p):
                 #     p.nonchanging_class_indices = [6, 7]  # These add other lulc classes that might have an effect on LUC but cannot change themselves (e.g. water, barren)
                 #     p.changing_class_indices = p.class_labels + p.nonchanging_class_labels
 
-                change_class_adjacency_effects = [
-                    [10, 5, 1, 1, 1],
-                    [1, 10, 1, 1, 1],
-                    [1, 1, 10, 1, 1],
-                    [1, 1, 1, 10, 1],
-                    [1, 1, 1, 1, 10],
-                    [1, 1, 1, 1, 1],
-                    [1, 1, 1, 1, 1],
-                ]
+                change_class_adjacency_effects = build_change_class_adjacency_effects(
+                    p.all_class_labels, p.changing_class_labels)
 
-                # NZ_brazil patch (2026-05-31): iterate all_class_labels (7) to add
-                # water/other gaussian regressors so the calibration matches Justin's
-                # bundled CSV structure. The 7x5 change_class_adjacency_effects matrix
-                # above already has rows for c=5 (water) and c=6 (other) = [1,1,1,1,1].
+                # Iterate every class, not only the changing ones, so the non-changing
+                # classes still contribute gaussian regressors to the calibration and the
+                # generated CSV matches the bundled coefficient structure. The adjacency
+                # matrix above carries a neutral row for each of them.
                 for c, label in enumerate(p.all_class_labels):
                     base_data_path = os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'convolution_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
 
