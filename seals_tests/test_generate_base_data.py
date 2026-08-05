@@ -1,6 +1,11 @@
+import os
+
 import pytest
 
-from seals.seals_generate_base_data import build_change_class_adjacency_effects
+from seals.seals_generate_base_data import (
+    build_change_class_adjacency_effects,
+    resolve_lulc_src_path_for_year,
+)
 
 
 SEALS7_ALL = ['urban', 'cropland', 'grassland', 'forest', 'othernat', 'water', 'other']
@@ -69,6 +74,46 @@ def test_urban_follows_cropland_edges():
     effects = build_change_class_adjacency_effects(SEALS8_ALL, SEALS8_CHANGING)
 
     assert effects[SEALS8_ALL.index('urban')][SEALS8_CHANGING.index('cropland')] == 5
+
+
+FILENAME_START = 'lulc_mapbiomas_300m_'
+
+
+@pytest.fixture
+def src_dir(tmp_path):
+    """A source directory holding rasters for 2000 and 2015 but not 2023.
+
+    The files need real bytes: hb.path_exists reports a zero-length file as missing.
+    """
+    for year in (2000, 2015):
+        (tmp_path / f'{FILENAME_START}{year}.tif').write_bytes(b'raster')
+    return str(tmp_path)
+
+
+def test_each_year_resolves_to_its_own_raster(src_dir):
+    """The regression: a scenario spanning several base years must not read one raster.
+
+    Resolving every base year to the same source makes the period look like it contains
+    no observed change, which calibrates silently against nothing.
+    """
+    resolved = [resolve_lulc_src_path_for_year(src_dir, FILENAME_START, y, 2000)
+                for y in (2000, 2015)]
+
+    assert len(set(resolved)) == 2
+    assert os.path.basename(resolved[1]) == f'{FILENAME_START}2015.tif'
+
+
+def test_missing_year_falls_back_to_the_seals_base_year(src_dir):
+    """A base year the source dataset has no raster for still resolves."""
+    resolved = resolve_lulc_src_path_for_year(src_dir, FILENAME_START, 2023, 2015)
+
+    assert os.path.basename(resolved) == f'{FILENAME_START}2015.tif'
+
+
+def test_no_fallback_year_keeps_the_requested_year(src_dir):
+    resolved = resolve_lulc_src_path_for_year(src_dir, FILENAME_START, 2023, None)
+
+    assert os.path.basename(resolved) == f'{FILENAME_START}2023.tif'
 
 
 def test_scheme_without_urban_or_cropland_is_purely_diagonal():

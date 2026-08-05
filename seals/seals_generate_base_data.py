@@ -88,6 +88,23 @@ def fine_processed_inputs(p):
 
 
 
+def resolve_lulc_src_path_for_year(src_dir, filename_start, year, fallback_year):
+    """Path to the source LULC raster for one base year.
+
+    A scenario can list a base year the source dataset has no raster for, such as an
+    economic base year carried over from the CGE side, so fall back to the SEALS base
+    year when that happens. The fallback is decided per year and only when the year's
+    own raster is genuinely missing; applying it unconditionally would give every base
+    year the same source raster, which reads as a period with no observed change.
+    """
+    year_path = os.path.join(src_dir, filename_start + str(year) + '.tif')
+
+    if fallback_year is None or hb.path_exists(year_path):
+        return year_path
+
+    return os.path.join(src_dir, filename_start + str(fallback_year) + '.tif')
+
+
 def lulc_clip(p):
     # Clip the fine LULC to the project AOI
     
@@ -116,7 +133,8 @@ def lulc_clip(p):
                     seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.base_years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = resolve_lulc_src_path_for_year(
+                            base_data_lulc_src_dir, src_filename_start, year, seals_base_year)
                         p.aoi_lulc_src_paths[year] = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
@@ -130,9 +148,16 @@ def lulc_clip(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                             
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                        # Look for the year's own raster first and fall back to the SEALS
+                        # base year only if it is missing, so a scenario spanning several
+                        # base years does not read one raster for all of them.
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
-                        p.base_data_lulc_src_paths[year] = p.get_path(search_path)
+                        found_src_path = p.get_path(search_path)
+                        if not hb.path_exists(found_src_path) and str(seals_base_year) != str(year):
+                            search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                            found_src_path = p.get_path(search_path)
+                        p.base_data_lulc_src_paths[year] = found_src_path
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year] 
                         p.lulc_src_paths[year] = p.base_data_lulc_src_paths[year] 
 
@@ -167,7 +192,8 @@ def lulc_clip_quick(p):
                     seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = resolve_lulc_src_path_for_year(
+                            base_data_lulc_src_dir, src_filename_start, year, seals_base_year)
                         p.aoi_lulc_src_paths[year] = os.path.join(p.cur_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
@@ -181,9 +207,16 @@ def lulc_clip_quick(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
 
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                        # Look for the year's own raster first and fall back to the SEALS
+                        # base year only if it is missing, so a scenario spanning several
+                        # base years does not read one raster for all of them.
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
-                        p.base_data_lulc_src_paths[year] = p.get_path(search_path)
+                        found_src_path = p.get_path(search_path)
+                        if not hb.path_exists(found_src_path) and str(seals_base_year) != str(year):
+                            search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                            found_src_path = p.get_path(search_path)
+                        p.base_data_lulc_src_paths[year] = found_src_path
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year]
                         p.lulc_src_paths[year] = p.base_data_lulc_src_paths[year]
 
