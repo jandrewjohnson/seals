@@ -1504,3 +1504,65 @@ def combine_coarsified_regional_with_coarse_estimate(coarsified_path, coarse_est
         hb.raster_calculator_flex([coarsified_path, coarse_estimate_path], covariate_regavg_shift, output_path)
 
 
+
+
+# Columns a coefficient table carries that are not classes. Everything else is one, under
+# either naming convention: older files name the column after the class, newer ones prefix
+# it with class_.
+NON_CLASS_COEFFICIENT_COLUMNS = frozenset(
+    ['spatial_regressor_name', 'data_location', 'type', 'calibration_block_index'])
+
+
+def coefficient_class_columns(coefficients_df):
+    """The column names holding per-class values, under either naming convention."""
+    return [c for c in coefficients_df.columns
+            if c not in NON_CLASS_COEFFICIENT_COLUMNS and not str(c).startswith('Unnamed')]
+
+
+def coefficient_class_labels(coefficients_df):
+    """The class labels a coefficient table was fitted for, in column order."""
+    return [c[len('class_'):] if str(c).startswith('class_') else c
+            for c in coefficient_class_columns(coefficients_df)]
+
+
+def check_coefficients_match_class_scheme(coefficients_df, changing_class_labels,
+                                          coefficients_path=None):
+    """Raise if a coefficient table was fitted under a different class scheme.
+
+    A coefficient file only means anything alongside the correspondence it was fitted with.
+    Class ids move between schemes, because SEALS requires the classes that can change to
+    come first, so inserting one shifts every class after it. Reading a file under the wrong
+    scheme therefore misassigns classes **silently** and produces a plausible-looking map
+    rather than an error.
+
+    Only membership is checked, not column order. The per-class columns are selected by name
+    in the order the correspondence defines, so a file carrying the same classes in a
+    different order is read correctly.
+    """
+    found = coefficient_class_labels(coefficients_df)
+    expected = list(changing_class_labels)
+
+    missing = [c for c in expected if c not in found]
+    unexpected = [c for c in found if c not in expected]
+
+    if not missing and not unexpected:
+        return
+
+    where = ' in ' + str(coefficients_path) if coefficients_path else ''
+    detail = []
+    if missing:
+        detail.append('the correspondence expects %s, which the file does not carry'
+                      % ', '.join(missing))
+    if unexpected:
+        detail.append('the file carries %s, which the correspondence does not define'
+                      % ', '.join(unexpected))
+    reason = '; '.join(detail)
+
+    raise ValueError(
+        'The trained coefficients%s were fitted for a different class scheme than the '
+        'correspondence this run uses: %s.\n'
+        '  correspondence: %s\n'
+        '  coefficients:   %s\n'
+        'Use the coefficient set fitted for this scheme, or point the scenario at the '
+        'correspondence these coefficients were fitted with.'
+        % (where, reason, ', '.join(expected) or '(none)', ', '.join(found) or '(none)'))

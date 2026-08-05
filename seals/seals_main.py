@@ -1914,6 +1914,16 @@ def allocation_zones(p):
             hb.log('Starting to read ' + calibration_parameters_path)
             df = pd.read_csv(calibration_parameters_path)
 
+            # Fail here rather than allocating with coefficients fitted for other classes.
+            # Class ids shift between schemes, so the wrong file misassigns classes silently
+            # and still produces a map.
+            scheme_labels = getattr(p, 'changing_class_labels', None)
+            if scheme_labels:
+                seals_utils.check_coefficients_match_class_scheme(
+                    df, scheme_labels, coefficients_path=calibration_parameters_path)
+            else:
+                hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
+
             # TODO This is bad. Fix it.
             # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
             # TODOOO AGAIN. Indeed, still bad.
