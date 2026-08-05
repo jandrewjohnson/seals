@@ -663,6 +663,14 @@ def set_derived_attributes(p):
     # Define the nonchanging class indices as anything in the lulc simplification classes that is not in the coarse simplification classes
     p.nonchanging_class_indices = [int(i) for i in p.lulc_correspondence_class_indices if i not in p.coarse_correspondence_class_indices] # These are the indices of classes THAT CANNOT EXPAND/CONTRACT
 
+    # Classes a project wants protected beyond the non-changing ones: classes nothing may
+    # expand onto even though they do have a coarse demand. Empty by default. The no-demand
+    # classes are derived above; anything further is a scenario statement rather than a
+    # property of the correspondences, so it has to be named. Urban is the standing example,
+    # since it expands but built land is not un-built.
+    if getattr(p, 'additional_protected_class_labels', None) is None:
+        p.additional_protected_class_labels = []
+
 
     p.changing_coarse_correspondence_class_indices = [int(i) for i in p.coarse_correspondence_class_indices if i not in p.nonchanging_class_indices] # These are the indices of classes THAT CAN EXPAND/CONTRACT
     p.changing_coarse_correspondence_class_labels = [str(p.coarse_correspondence_dict['dst_ids_to_labels'][i]) for i in p.changing_coarse_correspondence_class_indices if i not in p.nonchanging_class_indices]
@@ -1566,3 +1574,80 @@ def check_coefficients_match_class_scheme(coefficients_df, changing_class_labels
         'Use the coefficient set fitted for this scheme, or point the scenario at the '
         'correspondence these coefficients were fitted with.'
         % (where, reason, ', '.join(expected) or '(none)', ', '.join(found) or '(none)'))
+
+
+def protected_class_labels(all_class_labels, changing_class_labels,
+                           additional_protected_class_labels=None):
+    """The classes nothing may be allocated onto.
+
+    Two different things, which is why no single rule produces the set:
+
+    The non-changing classes are derived. A class is non-changing if it appears in the
+    land-cover correspondence but not in the coarse one, meaning SEALS is given no budget
+    for it. Letting another class expand onto one would shrink it with nothing authorising
+    the loss, so the map would stop conserving area. That argument holds for any scheme, and
+    it is also what lets a project add a no-expansion area, a solar plant say, purely by
+    listing it in its own correspondence.
+
+    Anything further is a scenario statement and has to be named. Urban is the standing
+    example: it has a budget and does expand, so it is not non-changing, but built land is
+    not un-built and the allocator places expansion only, so urban taken by another class
+    could never be recovered.
+    """
+    protected = [c for c in all_class_labels if c not in set(changing_class_labels)]
+    for label in (additional_protected_class_labels or []):
+        if label not in protected:
+            protected.append(label)
+    return protected
+
+
+def apply_presence_constraints(coefficients_df, all_class_labels, changing_class_labels,
+                               additional_protected_class_labels=None):
+    """Zero the multiplicative rows of the classes nothing may be allocated onto.
+
+    A presence constraint says "no expanding class may take this cell". The rows are written
+    for every class when the starting values are generated; this sets the protected ones to
+    zero and leaves the rest neutral at 1.0.
+
+    Calibration cannot produce these. It fits coefficients only for the classes that change
+    and never learns that a class must be excluded, so the constraint rows come out of it
+    neutral and are imposed afterwards.
+
+    See protected_class_labels for which classes those are and why.
+
+    The fitted coefficients are never touched, so the result shares its calibration with the
+    input and the two remain directly comparable.
+    """
+    excluded = protected_class_labels(all_class_labels, changing_class_labels,
+                                      additional_protected_class_labels)
+
+    out = coefficients_df.copy()
+    class_columns = coefficient_class_columns(out)
+    if not class_columns:
+        raise ValueError('no per-class columns found; this does not look like a coefficient table')
+
+    # Two naming conventions are in circulation: newer tables call the row
+    # '<class>_presence_constraint', older ones '<class>_constraint'. Match either, so this
+    # works on a file whichever generated it.
+    present = set(out.loc[out['type'] == 'multiplicative', 'spatial_regressor_name'])
+    constraint_names, missing = [], []
+    for label in excluded:
+        candidates = [label + '_presence_constraint', label + '_constraint']
+        found = [c for c in candidates if c in present]
+        if found:
+            constraint_names.extend(found)
+        else:
+            missing.append(label)
+
+    if missing:
+        raise ValueError('no constraint row to zero for: %s. The class must be in the land-cover '
+                         'correspondence so the row is generated.' % ', '.join(missing))
+
+    rows = (out['type'] == 'multiplicative') & out['spatial_regressor_name'].isin(constraint_names)
+    out.loc[rows, class_columns] = 0.0
+
+    fitted = out['type'] != 'multiplicative'
+    if not out.loc[fitted, class_columns].equals(coefficients_df.loc[fitted, class_columns]):
+        raise ValueError('fitted coefficients changed; only constraint rows may be modified')
+
+    return out

@@ -250,6 +250,27 @@ def combined_trained_coefficients(p):
             df = pd.concat(list_of_dfs, axis=0, ignore_index=True)
 
             hb.log('extract_calibration_from_project() found ' + str(len(extant_block_calibration_paths)) + ' calibration files.')
+
+            # Calibration cannot produce the constraints. It fits coefficients for the classes
+            # that change and never learns that a class must be excluded, so the constraint
+            # rows come out of it neutral and are imposed here, as the last step.
+            #
+            # The non-changing classes are derived: no coarse demand means expansion onto one
+            # would shrink it with nothing authorising the loss. A project adds anything
+            # further through additional_protected_class_labels, which is a scenario statement
+            # rather than something derivable. Urban is the standing example, since it has a
+            # budget and expands, but built land is not un-built.
+            #
+            # Writing one file loses nothing: these zeros carry no fitted information, so the
+            # neutral form is recovered by setting the constraint rows back to 1.0.
+            additional_protected = getattr(p, 'additional_protected_class_labels', [])
+            protected = seals_utils.protected_class_labels(
+                p.all_class_labels, p.changing_class_labels, additional_protected)
+            if protected:
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, p.changing_class_labels, additional_protected)
+                hb.log('Imposed presence constraints on: ' + ', '.join(protected))
+
             df.to_csv(p.combined_calibration_file_path)
 
 
