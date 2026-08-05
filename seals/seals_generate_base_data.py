@@ -88,6 +88,23 @@ def fine_processed_inputs(p):
 
 
 
+def resolve_lulc_src_path_for_year(src_dir, filename_start, year, fallback_year):
+    """Path to the source LULC raster for one base year.
+
+    A scenario can list a base year the source dataset has no raster for, such as an
+    economic base year carried over from the CGE side, so fall back to the SEALS base
+    year when that happens. The fallback is decided per year and only when the year's
+    own raster is genuinely missing; applying it unconditionally would give every base
+    year the same source raster, which reads as a period with no observed change.
+    """
+    year_path = os.path.join(src_dir, filename_start + str(year) + '.tif')
+
+    if fallback_year is None or hb.path_exists(year_path):
+        return year_path
+
+    return os.path.join(src_dir, filename_start + str(fallback_year) + '.tif')
+
+
 def lulc_clip(p):
     # Clip the fine LULC to the project AOI
     
@@ -116,7 +133,8 @@ def lulc_clip(p):
                     seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.base_years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = resolve_lulc_src_path_for_year(
+                            base_data_lulc_src_dir, src_filename_start, year, seals_base_year)
                         p.aoi_lulc_src_paths[year] = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
@@ -130,9 +148,16 @@ def lulc_clip(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
                             
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                        # Look for the year's own raster first and fall back to the SEALS
+                        # base year only if it is missing, so a scenario spanning several
+                        # base years does not read one raster for all of them.
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
-                        p.base_data_lulc_src_paths[year] = p.get_path(search_path)
+                        found_src_path = p.get_path(search_path)
+                        if not hb.path_exists(found_src_path) and str(seals_base_year) != str(year):
+                            search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                            found_src_path = p.get_path(search_path)
+                        p.base_data_lulc_src_paths[year] = found_src_path
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year] 
                         p.lulc_src_paths[year] = p.base_data_lulc_src_paths[year] 
 
@@ -167,7 +192,8 @@ def lulc_clip_quick(p):
                     seals_base_year = seals_base_year[0]
                 if p.aoi != 'global':
                     for year in p.years:
-                        p.base_data_lulc_src_paths[year] = os.path.join(base_data_lulc_src_dir, src_filename_start + str(seals_base_year) + '.tif')
+                        p.base_data_lulc_src_paths[year] = resolve_lulc_src_path_for_year(
+                            base_data_lulc_src_dir, src_filename_start, year, seals_base_year)
                         p.aoi_lulc_src_paths[year] = os.path.join(p.cur_dir, 'lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         p.lulc_src_paths[year] = p.aoi_lulc_src_paths[year] 
                         
@@ -181,9 +207,16 @@ def lulc_clip_quick(p):
                         # possible_dir = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year))
                         # output_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
 
-                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                        # Look for the year's own raster first and fall back to the SEALS
+                        # base year only if it is missing, so a scenario spanning several
+                        # base years does not read one raster for all of them.
+                        search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(year) + '.tif')
                         # p.base_data_lulc_src_paths[year] = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
-                        p.base_data_lulc_src_paths[year] = p.get_path(search_path)
+                        found_src_path = p.get_path(search_path)
+                        if not hb.path_exists(found_src_path) and str(seals_base_year) != str(year):
+                            search_path = os.path.join('lulc', p.lulc_src_label, src_filename_start + str(seals_base_year) + '.tif')
+                            found_src_path = p.get_path(search_path)
+                        p.base_data_lulc_src_paths[year] = found_src_path
                         p.aoi_lulc_src_paths[year] = p.base_data_lulc_src_paths[year]
                         p.lulc_src_paths[year] = p.base_data_lulc_src_paths[year]
 
@@ -401,6 +434,32 @@ def lulc_convolutions(p):
 
 
 
+def build_change_class_adjacency_effects(all_class_labels, changing_class_labels):
+    """Prior weights for the class-convolution regressors.
+
+    Rows are all classes, columns are the changing classes. A class's own convolution
+    carries the strong weight, so expansion follows the existing edges of that class,
+    and urban additionally follows cropland edges. Classes that cannot change have no
+    column of their own and stay neutral across the row.
+
+    Built from the class lists rather than written out, so the prior holds for any
+    simplification scheme. For seals7 it reproduces the original hardcoded 7x5 matrix
+    exactly.
+    """
+    all_class_labels = list(all_class_labels)
+    changing_class_labels = list(changing_class_labels)
+
+    effects = [
+        [10 if label == changing_label else 1 for changing_label in changing_class_labels]
+        for label in all_class_labels
+    ]
+
+    if 'urban' in all_class_labels and 'cropland' in changing_class_labels:
+        effects[all_class_labels.index('urban')][changing_class_labels.index('cropland')] = 5
+
+    return effects
+
+
 def local_data_regressors_starting_values(p):
     """TODOO Note the very confusing partial duplication with the regressors_starting_values task defined above. THIS task is the one that is used in calibration."""
     p.local_data_regressors_starting_values_path = os.path.join(p.cur_dir, 'local_data_regressors_starting_values.csv')
@@ -452,20 +511,13 @@ def local_data_regressors_starting_values(p):
                 #     p.nonchanging_class_indices = [6, 7]  # These add other lulc classes that might have an effect on LUC but cannot change themselves (e.g. water, barren)
                 #     p.changing_class_indices = p.class_labels + p.nonchanging_class_labels
 
-                change_class_adjacency_effects = [
-                    [10, 5, 1, 1, 1],
-                    [1, 10, 1, 1, 1],
-                    [1, 1, 10, 1, 1],
-                    [1, 1, 1, 10, 1],
-                    [1, 1, 1, 1, 10],
-                    [1, 1, 1, 1, 1],
-                    [1, 1, 1, 1, 1],
-                ]
+                change_class_adjacency_effects = build_change_class_adjacency_effects(
+                    p.all_class_labels, p.changing_class_labels)
 
-                # NZ_brazil patch (2026-05-31): iterate all_class_labels (7) to add
-                # water/other gaussian regressors so the calibration matches Justin's
-                # bundled CSV structure. The 7x5 change_class_adjacency_effects matrix
-                # above already has rows for c=5 (water) and c=6 (other) = [1,1,1,1,1].
+                # Iterate every class, not only the changing ones, so the non-changing
+                # classes still contribute gaussian regressors to the calibration and the
+                # generated CSV matches the bundled coefficient structure. The adjacency
+                # matrix above carries a neutral row for each of them.
                 for c, label in enumerate(p.all_class_labels):
                     base_data_path = os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(p.key_base_year), 'convolution_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '_' + str(p.all_class_labels[c]) + '_gaussian_' + str(sigma) + '.tif')
 
