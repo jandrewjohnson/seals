@@ -1648,3 +1648,38 @@ def apply_presence_constraints(coefficients_df, all_class_labels, changing_class
         raise ValueError('fitted coefficients changed; only constraint rows may be modified')
 
     return out
+
+
+def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_src_label,
+                              lulc_simplification_label, base_year):
+    """Point each presence constraint at this run's own layer for the year it allocates from.
+
+    The constraint rows carry a path to a binary raster saying where the protected class is.
+    That path is written when the coefficients are produced, so it names the calibration's
+    project and the year it was trained to, and a file used anywhere else then points at a
+    directory that may not exist and a year that may not be the one being allocated from.
+
+    Both matter. A layer from before the base year marks positions that have since moved; a
+    layer from after it encodes land cover the run should not be able to see, which is how a
+    hindcast scored against a 2020 mask appeared to gain skill it had not earned.
+
+    Rebuilding the path here rather than editing the stored one also makes a coefficient set
+    portable: the same file can be allocated from any base year, and from any project.
+    """
+    import os
+
+    out = coefficients_df.copy()
+    rows = out['type'] == 'multiplicative'
+    suffixes = ('_presence_constraint', '_constraint')
+
+    for i in out.index[rows]:
+        name = str(out.at[i, 'spatial_regressor_name'])
+        label = next((name[:-len(s)] for s in suffixes if name.endswith(s)), None)
+        if label is None:
+            continue
+        out.at[i, 'data_location'] = os.path.join(
+            fine_processed_inputs_dir, 'lulc', lulc_src_label, lulc_simplification_label,
+            'binaries', str(base_year),
+            'binary_%s_%s_%s_%s.tif' % (lulc_src_label, lulc_simplification_label,
+                                        base_year, label))
+    return out

@@ -1945,6 +1945,16 @@ def allocation_zones(p):
             else:
                 hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
 
+            # Point the presence constraints at this run's own layer for the year it allocates
+            # from, rather than trusting the path baked in when the coefficients were produced.
+            # That path names the calibration's project and the year it was trained to, so a
+            # file used anywhere else points at a directory that need not exist and a year that
+            # need not be the base year. A layer from after the base year also encodes land
+            # cover the run should not see.
+            df = seals_utils.resolve_constraint_layers(
+                df, p.fine_processed_inputs_dir, p.lulc_src_label,
+                p.lulc_simplification_label, p.key_base_year)
+
             # TODO This is bad. Fix it.
             # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
             # TODOOO AGAIN. Indeed, still bad.
