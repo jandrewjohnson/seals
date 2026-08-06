@@ -48,11 +48,19 @@ def test_the_message_names_what_is_missing():
     assert 'pasture' in str(e.value) and 'natural_grassland' in str(e.value)
 
 
-def test_the_message_names_what_is_unexpected():
-    """A seals7 correspondence with seals8 coefficients: grassland is gone, two took its place."""
-    with pytest.raises(ValueError) as e:
-        check_coefficients_match_class_scheme(table(SEALS8), SEALS7)
-    assert 'does not define' in str(e.value)
+def test_a_file_carrying_extra_classes_is_accepted():
+    """Selection is by name, so surplus columns are ignored rather than wrong.
+
+    This is the Brazil production configuration: its coarse correspondence routes other into
+    grassland, so the run needs four changing classes while the coefficient file carries five.
+    """
+    check_coefficients_match_class_scheme(table(SEALS7), ['urban', 'cropland', 'grassland', 'forest'])
+
+
+def test_a_file_missing_a_needed_class_raises():
+    """seals8 correspondence with seals7 coefficients: pasture and campos are not in the file."""
+    with pytest.raises(ValueError, match='does not carry'):
+        check_coefficients_match_class_scheme(table(SEALS7), SEALS8)
 
 
 def test_a_renamed_class_is_caught():

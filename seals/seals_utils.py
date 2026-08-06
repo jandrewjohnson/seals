@@ -1551,20 +1551,17 @@ def check_coefficients_match_class_scheme(coefficients_df, changing_class_labels
     expected = list(changing_class_labels)
 
     missing = [c for c in expected if c not in found]
-    unexpected = [c for c in found if c not in expected]
 
-    if not missing and not unexpected:
+    # Extra columns are not an error. The per-class columns are selected by name, so a file
+    # carrying classes this run does not need is read correctly and the surplus ignored. That
+    # is a real configuration: a coarse correspondence can route one class into another, so a
+    # run legitimately needs fewer classes than the file it was fitted with.
+    if not missing:
         return
 
     where = ' in ' + str(coefficients_path) if coefficients_path else ''
-    detail = []
-    if missing:
-        detail.append('the correspondence expects %s, which the file does not carry'
-                      % ', '.join(missing))
-    if unexpected:
-        detail.append('the file carries %s, which the correspondence does not define'
-                      % ', '.join(unexpected))
-    reason = '; '.join(detail)
+    reason = ('the correspondence expects %s, which the file does not carry'
+              % ', '.join(missing))
 
     raise ValueError(
         'The trained coefficients%s were fitted for a different class scheme than the '
