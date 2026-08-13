@@ -1685,7 +1685,7 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
     return out
 
 
-def rebase_project_paths(coefficients_df, fine_processed_inputs_dir):
+def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=None):
     """Re-root the per-project inputs a coefficient file points at.
 
     Most regressors are named by an absolute path written when the coefficients were fitted,
@@ -1703,12 +1703,22 @@ def rebase_project_paths(coefficients_df, fine_processed_inputs_dir):
     marker = os.path.join('intermediate', 'fine_processed_inputs')
     out = coefficients_df.copy()
 
+    import re
+
     def rebase(value):
         text = str(value)
         at = text.find(marker)
         if at < 0:
             return value
         tail = text[at + len(marker):].lstrip('/\\')
+        if base_year is not None:
+            # The layers are also year-stamped, in the directory and again in the filename,
+            # with the year the coefficients were fitted to. A run allocating from a different
+            # base year needs its own, and generates only that one.
+            found = re.search(r'/(19|20)\d{2}/', '/' + tail)
+            if found:
+                stale = found.group(0).strip('/')
+                tail = tail.replace(stale, str(base_year))
         return os.path.join(fine_processed_inputs_dir, tail)
 
     out['data_location'] = out['data_location'].map(rebase)
