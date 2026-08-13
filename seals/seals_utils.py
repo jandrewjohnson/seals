@@ -1685,7 +1685,8 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
     return out
 
 
-def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=None):
+def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=None,
+                         base_data_dir=None):
     """Re-root the per-project inputs a coefficient file points at.
 
     Most regressors are named by an absolute path written when the coefficients were fitted,
@@ -1722,4 +1723,21 @@ def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=N
         return os.path.join(fine_processed_inputs_dir, tail)
 
     out['data_location'] = out['data_location'].map(rebase)
+
+    # The shared covariates are shared in CONTENT, not in location: base_data sits at a
+    # different root on every machine, so a path written on one names a directory that does
+    # not exist on another. Re-root those too, keeping everything below base_data intact.
+    if base_data_dir is not None:
+        bd = 'base_data'
+
+        def rebase_shared(value):
+            text = str(value)
+            at = text.find(bd)
+            if at < 0 or marker in text:
+                return value
+            tail = text[at + len(bd):].lstrip('/\\')
+            return os.path.join(base_data_dir, tail)
+
+        out['data_location'] = out['data_location'].map(rebase_shared)
+
     return out

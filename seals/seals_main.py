@@ -1955,7 +1955,8 @@ def allocation_zones(p):
             # coefficient file fitted elsewhere names that project's directories, which need
             # not exist here; every project generates its own copies under the same relative
             # path. Shared covariates in base_data are untouched.
-            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year)
+            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year,
+                                                 p.base_data_dir)
 
             df = seals_utils.resolve_constraint_layers(
                 df, p.fine_processed_inputs_dir, p.lulc_src_label,

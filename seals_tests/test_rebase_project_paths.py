@@ -70,3 +70,14 @@ def test_without_a_base_year_the_stamp_is_left_alone():
     out = rebase_project_paths(d, HERE)
 
     assert out.loc[0, 'data_location'] == HERE + '/lulc/binaries/2015/b.tif'
+
+
+def test_shared_covariates_are_rerooted_to_this_machines_base_data():
+    """base_data is shared in content, not in location — the root differs per machine."""
+    d = pd.DataFrame({
+        'spatial_regressor_name': ['alt_m'], 'type': ['additive'],
+        'data_location': ['/Users/someone/Files/base_data/seals/static_regressors/alt_m.tif']})
+
+    out = rebase_project_paths(d, HERE, 2020, '/home/other/base_data')
+
+    assert out.loc[0, 'data_location'] == '/home/other/base_data/seals/static_regressors/alt_m.tif'
