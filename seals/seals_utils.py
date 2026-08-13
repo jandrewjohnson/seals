@@ -1683,3 +1683,33 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
             'binary_%s_%s_%s_%s.tif' % (lulc_src_label, lulc_simplification_label,
                                         base_year, label))
     return out
+
+
+def rebase_project_paths(coefficients_df, fine_processed_inputs_dir):
+    """Re-root the per-project inputs a coefficient file points at.
+
+    Most regressors are named by an absolute path written when the coefficients were fitted,
+    so a file calibrated on one machine or in one project names directories that need not
+    exist anywhere else. The layers themselves are not special: every project regenerates its
+    own binaries and convolutions under fine_processed_inputs, so the same file is available
+    locally under a different root.
+
+    Only paths containing intermediate/fine_processed_inputs are moved. Everything else, the
+    soil and climate covariates that live in base_data, is left alone, because those are
+    shared rather than per-project.
+    """
+    import os
+
+    marker = os.path.join('intermediate', 'fine_processed_inputs')
+    out = coefficients_df.copy()
+
+    def rebase(value):
+        text = str(value)
+        at = text.find(marker)
+        if at < 0:
+            return value
+        tail = text[at + len(marker):].lstrip('/\\')
+        return os.path.join(fine_processed_inputs_dir, tail)
+
+    out['data_location'] = out['data_location'].map(rebase)
+    return out

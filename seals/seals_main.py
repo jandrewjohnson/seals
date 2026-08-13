@@ -1951,6 +1951,12 @@ def allocation_zones(p):
             # file used anywhere else points at a directory that need not exist and a year that
             # need not be the base year. A layer from after the base year also encodes land
             # cover the run should not see.
+            # Re-root the per-project regressor layers before anything reads them. A
+            # coefficient file fitted elsewhere names that project's directories, which need
+            # not exist here; every project generates its own copies under the same relative
+            # path. Shared covariates in base_data are untouched.
+            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir)
+
             df = seals_utils.resolve_constraint_layers(
                 df, p.fine_processed_inputs_dir, p.lulc_src_label,
                 p.lulc_simplification_label, p.key_base_year)
