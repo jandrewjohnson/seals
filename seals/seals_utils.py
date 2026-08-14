@@ -1598,6 +1598,112 @@ def protected_class_labels(all_class_labels, changing_class_labels,
     return protected
 
 
+def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_labels,
+                                          all_class_indices, changing_class_labels,
+                                          additional_protected_class_labels=None):
+    """Raise if the allocation moved land out of a class it was forbidden to touch.
+
+    The companion to check_coefficients_match_class_scheme. That one guards the INPUT, that
+    the coefficients belong to this scheme; this guards the OUTPUT, that the allocation
+    respected the presence constraints. They fail independently: a malformed constraint layer
+    or a kernel change violates only this one.
+
+    Worth asserting rather than reviewing, because the failure is invisible. A contaminated
+    run leaks a few hundred pixels out of a hundred thousand changed -- a well-formed map, no
+    exception, no NoData, nothing to grep for, and far too small to see on a 300 m map.
+
+    Two claims, deliberately separated, because they are true for different reasons and a
+    future config change should read as a decision rather than a bug:
+
+      derived   A non-changing class has no coarse budget, so nothing authorises a loss and
+                the map would stop conserving area. True for any scheme, always.
+      declared  An additionally protected class (urban is the standing case) DOES have a
+                budget and does expand. It is frozen by a scenario choice, so this half can
+                legitimately be relaxed by changing that choice.
+
+    Classes are resolved BY LABEL, never by id. Ids shift between schemes -- water is 6 under
+    seals7 and 7 under seals8 -- so a hardcoded id would check the wrong class and pass
+    confidently, which is the very failure this module exists to prevent.
+    """
+    import numpy as np
+    from osgeo import gdal
+
+    label_to_index = dict(zip(all_class_labels, all_class_indices))
+    derived = protected_class_labels(all_class_labels, changing_class_labels)
+    declared = [c for c in (additional_protected_class_labels or []) if c not in derived]
+
+    if not derived and not declared:
+        return
+
+    projected_ds, base_ds = gdal.Open(projected_path), gdal.Open(base_path)
+    if projected_ds is None or base_ds is None:
+        hb.log('  non-changing check: could not open both rasters; NOT CHECKED')
+        return
+    if (projected_ds.RasterXSize, projected_ds.RasterYSize) != (base_ds.RasterXSize, base_ds.RasterYSize):
+        # A forced-global-bb run legitimately differs in extent. Say so loudly rather than
+        # skipping quietly -- an unrun check must never look like a passed one.
+        hb.log('  non-changing check: NOT CHECKED, extent differs (%s vs %s). %s'
+               % ((projected_ds.RasterXSize, projected_ds.RasterYSize),
+                  (base_ds.RasterXSize, base_ds.RasterYSize), projected_path))
+        return
+
+    wanted = [(c, label_to_index[c]) for c in derived + declared if c in label_to_index]
+    left = {label: 0 for label, _ in wanted}
+    destinations = {label: {} for label, _ in wanted}
+
+    projected_band, base_band = projected_ds.GetRasterBand(1), base_ds.GetRasterBand(1)
+    n_rows, n_cols = projected_ds.RasterYSize, projected_ds.RasterXSize
+    step = max(1, min(2048, n_rows))
+    for row in range(0, n_rows, step):
+        rows = min(step, n_rows - row)
+        after = projected_band.ReadAsArray(0, row, n_cols, rows)
+        before = base_band.ReadAsArray(0, row, n_cols, rows)
+        for label, index in wanted:
+            moved = (before == index) & (after != index) & (after > 0)
+            n = int(moved.sum())
+            if not n:
+                continue
+            left[label] += n
+            for value, count in zip(*np.unique(after[moved], return_counts=True)):
+                destinations[label][int(value)] = destinations[label].get(int(value), 0) + int(count)
+    projected_ds = base_ds = None
+
+    index_to_label = {v: k for k, v in label_to_index.items()}
+
+    def describe(label):
+        top = sorted(destinations[label].items(), key=lambda kv: -kv[1])[:3]
+        return '%s: %d px -> %s' % (label, left[label],
+                                    ', '.join('%s %d' % (index_to_label.get(v, v), c) for v, c in top))
+
+    broken_derived = [c for c in derived if left.get(c)]
+    broken_declared = [c for c in declared if left.get(c)]
+
+    if broken_derived:
+        raise ValueError(
+            'The allocation moved land OUT of a non-changing class, which cannot be right: '
+            'these classes have no coarse budget, so nothing authorises the loss and the map '
+            'no longer conserves area.\n'
+            '  %s\n'
+            '  map:  %s\n'
+            '  base: %s\n'
+            'Non-changing classes are those in the land-cover correspondence but absent from '
+            'the coarse one. Check that the presence-constraint rows for them are zeroed in '
+            'the coefficient file this run used.'
+            % ('\n  '.join(describe(c) for c in broken_derived), projected_path, base_path))
+
+    if broken_declared:
+        raise ValueError(
+            'The allocation moved land OUT of a class this scenario declared protected via '
+            'additional_protected_class_labels.\n'
+            '  %s\n'
+            '  map:  %s\n'
+            'Unlike a non-changing class this one does have a coarse budget, so the freeze is '
+            'a scenario choice rather than an accounting requirement. Either the constraint '
+            'did not reach the coefficients, or the class should no longer be listed as '
+            'protected -- which is a decision, not a bug.'
+            % ('\n  '.join(describe(c) for c in broken_declared), projected_path))
+
+
 def apply_presence_constraints(coefficients_df, all_class_labels, changing_class_labels,
                                additional_protected_class_labels=None):
     """Zero the multiplicative rows of the classes nothing may be allocated onto.

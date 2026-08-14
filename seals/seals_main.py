@@ -2683,8 +2683,20 @@ def stitched_lulc_simplified_scenarios(p):
                                 #     hb.clip_raster_by_bb(p.lulc_simplified_paths[p.key_base_year], p.bb_of_tiles, p.local_output_base_map_path)
                     else:
                         hb.log('Skipping stitching ' + p.lulc_projected_stitched_path + ' because it already exists.')
-                    
-                    
+
+                    # Assert here, at the task that produces the artefact, rather than in a
+                    # downstream consumer: the map must not leave this function in a state no
+                    # one checked. See seals_utils.assert_non_changing_classes_unchanged.
+                    if hb.path_exists(p.lulc_projected_stitched_path):
+                        seals_utils.assert_non_changing_classes_unchanged(
+                            p.lulc_projected_stitched_path,
+                            p.base_year_lulc_path,
+                            p.all_class_labels,
+                            p.all_class_indices,
+                            p.changing_class_labels,
+                            getattr(p, 'additional_protected_class_labels', None),
+                        )
+
                     # POSSIBLE STARTING POINT: I have no idea why, but the areas in the NORTH outside of the aereg but inside the bb have change, but the areas IN the aezreg don't have change.
                     if p.clip_to_aoi and p.aoi != 'global' and hb.path_exists(p.aoi_path):
                         hb.timer('start clip')
