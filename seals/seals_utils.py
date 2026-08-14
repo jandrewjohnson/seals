@@ -1504,3 +1504,94 @@ def combine_coarsified_regional_with_coarse_estimate(coarsified_path, coarse_est
         hb.raster_calculator_flex([coarsified_path, coarse_estimate_path], covariate_regavg_shift, output_path)
 
 
+
+
+# ---- OSM energy-plant footprints + Sentinel-2 dating (SEALS energy-class inputs) ----
+def parse_capacity_mw(tagval):
+    """Capacity in MW from an OSM plant:output:electricity tag. OSM stores it many ways:
+    '100 MW', '50MW', '4.5 MWp' (PV peak), '0.5 GW', '100000000' (raw watts), 'yes', or
+    several values joined by ';'. Units matched case-insensitively, optional 'p' suffix
+    allowed, multiple values summed. A bare number is watts if large, MW if small. Returns
+    None when nothing is parseable."""
+    import re
+    s = str(tagval).strip().lower().replace(",", "")
+    if not s or s in ("yes", "no"):
+        return None
+    factor = {"w": 1e-6, "kw": 1e-3, "mw": 1.0, "gw": 1e3}
+    hits = re.findall(r"([\d.]+)\s*([kmg]?w)p?\b", s)
+    if hits:
+        return sum(float(num) * factor[unit] for num, unit in hits)
+    if re.fullmatch(r"[\d.]+", s):
+        x = float(s)
+        return x / 1e6 if x >= 1e5 else x
+    return None
+
+
+def overpass_plants_to_gdf(bbox, source, area_crs=6933):
+    """OSM power=plant features (plant:source == source) within bbox=(south, west, north,
+    east), as a GeoDataFrame with the mapped footprint polygon, capacity_mw, name, and
+    area_km2. 'out geom tags' returns full polygon vertices, so geometry is each plant's
+    mapped site outline. area_km2 is the polygon area in an equal-area CRS (default
+    EPSG:6933) = the gross mapped site extent (close to converted land for solar; the whole
+    -farm envelope for wind). Uses the generic hb.read_overpass transport; MW via
+    parse_capacity_mw."""
+    import geopandas as gpd
+    from shapely.geometry import Point, Polygon
+    s, w, n, e = bbox
+    q = (f'[out:json][timeout:180];'
+         f'(nwr["power"="plant"]["plant:source"="{source}"]({s},{w},{n},{e}););'
+         f'out geom tags;')
+    recs = []
+    for el in hb.read_overpass(q):
+        g = el.get("geometry")
+        if el.get("type") == "way" and g and len(g) >= 3:
+            geom = Polygon([(pt["lon"], pt["lat"]) for pt in g])
+        elif "lon" in el:
+            geom = Point(el["lon"], el["lat"])
+        elif "bounds" in el:
+            b = el["bounds"]
+            geom = Point((b["minlon"] + b["maxlon"]) / 2, (b["minlat"] + b["maxlat"]) / 2)
+        else:
+            continue
+        t = el.get("tags", {})
+        cap_raw = t.get("plant:output:electricity", "")
+        recs.append({"source": source, "name": t.get("name", ""),
+                     "capacity_raw": cap_raw, "capacity_mw": parse_capacity_mw(cap_raw),
+                     "geometry": geom})
+    gdf = gpd.GeoDataFrame(recs, crs="EPSG:4326")
+    poly = gdf.geom_type.isin(["Polygon", "MultiPolygon"])
+    gdf["area_km2"] = float("nan")
+    if poly.any():
+        gdf.loc[poly, "area_km2"] = gdf.loc[poly].to_crs(area_crs).area / 1e6
+    return gdf
+
+
+def detect_iso3_column(gdf, iso3_codes, min_matches=10):
+    """Name of the gdf column whose values best match the given ISO3 codes (>= min_matches
+    overlaps). Auto-detects the ISO3 field of a boundary vector. Raises if none matches."""
+    ref = set(iso3_codes)
+    for c in gdf.columns:
+        vals = set(str(v) for v in gdf[c].dropna().unique())
+        if len(vals & ref) >= min_matches:
+            return c
+    raise ValueError("no ISO3 column found in boundaries")
+
+
+def hls_indices(roi, year, month_start=6, month_end=9):
+    """Dry-season median NDVI and NDBI from Harmonized Landsat Sentinel-2 (HLS, 30 m) over an Earth
+    Engine roi for one year. HLSL30 (Landsat 8/9, 2013+) + HLSS30 (Sentinel-2, 2015+) are cross-
+    calibrated to one grid, so the series reaches before Sentinel-2 with no sensor jump. The scale
+    factor cancels in the normalized differences. earthengine-api imported lazily (not a seals dep)."""
+    import ee
+    a, b = ee.Date.fromYMD(year, month_start, 1), ee.Date.fromYMD(year, month_end, 30)
+
+    def clear(im):                                   # HLS Fmask: bit 1 = cloud, bit 3 = cloud shadow
+        f = im.select("Fmask")
+        return im.updateMask(f.bitwiseAnd(1 << 1).eq(0).And(f.bitwiseAnd(1 << 3).eq(0)))
+
+    l30 = (ee.ImageCollection("NASA/HLS/HLSL30/v002").filterBounds(roi).filterDate(a, b)
+           .map(clear).select(["B4", "B5", "B6"], ["red", "nir", "swir"]))       # Landsat OLI
+    s30 = (ee.ImageCollection("NASA/HLS/HLSS30/v002").filterBounds(roi).filterDate(a, b)
+           .map(clear).select(["B4", "B8A", "B11"], ["red", "nir", "swir"]))     # Sentinel MSI (B8A = harmonized NIR)
+    col = l30.merge(s30).median()
+    return col.normalizedDifference(["nir", "red"]), col.normalizedDifference(["swir", "nir"])
