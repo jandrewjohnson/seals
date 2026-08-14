@@ -137,3 +137,54 @@ def test_extent_mismatch_is_reported_not_silently_passed(scene, capsys):
     seals_utils.assert_non_changing_classes_unchanged(
         p, b, SEALS7_LABELS, SEALS7_INDICES, SEALS7_CHANGING, ['urban'])
     assert 'NOT CHECKED' in capsys.readouterr().out
+
+
+class _Fake:
+    """Stands in for ProjectFlow's p, which is just an attribute bag here."""
+
+
+@pytest.mark.parametrize('value,expected', [
+    (None, []),
+    ([], []),
+    (['urban'], ['urban']),
+    ('urban', ['urban']),                    # scenario column, one class
+    ('urban water', ['urban', 'water']),     # space separated
+    ('urban, water', ['urban', 'water']),    # comma separated
+    ('', []),                                # blank cell
+    (float('nan'), []),                      # blank cell through pandas
+    ('nan', []),
+])
+def test_protected_labels_resolve_from_scenario_column(value, expected):
+    """Protecting a class is a scenario statement, so it must be settable per scenario row.
+
+    assign_df_row_to_object_attributes puts every scenario column on p, so the value can
+    arrive as a string rather than the project's list.
+    """
+    p = _Fake()
+    if value is not None:
+        p.additional_protected_class_labels = value
+    assert seals_utils.resolve_additional_protected_class_labels(p) == expected
+
+
+def test_two_scenarios_can_differ(scene):
+    """The point of the move: protected and unprotected in ONE scenarios CSV.
+
+    With the setting on the project this needed two separate projects.
+    """
+    base, tmp = scene
+    after = base.copy()
+    after[4, 0:3] = 2                        # urban -> cropland
+    b = write(tmp / 'base.tif', base)
+    p = write(tmp / 'projected.tif', after)
+
+    protected = _Fake(); protected.additional_protected_class_labels = 'urban'
+    unprotected = _Fake(); unprotected.additional_protected_class_labels = ''
+
+    with pytest.raises(ValueError):
+        seals_utils.assert_non_changing_classes_unchanged(
+            p, b, SEALS7_LABELS, SEALS7_INDICES, SEALS7_CHANGING,
+            seals_utils.resolve_additional_protected_class_labels(protected))
+
+    seals_utils.assert_non_changing_classes_unchanged(
+        p, b, SEALS7_LABELS, SEALS7_INDICES, SEALS7_CHANGING,
+        seals_utils.resolve_additional_protected_class_labels(unprotected))

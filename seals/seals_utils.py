@@ -1598,6 +1598,31 @@ def protected_class_labels(all_class_labels, changing_class_labels,
     return protected
 
 
+def resolve_additional_protected_class_labels(p):
+    """The classes this SCENARIO declares protected, from the scenario row or the project.
+
+    Belongs in the scenario CSV rather than on the project, because protecting a class is a
+    scenario statement, not a property of the correspondences. Protecting urban and not
+    protecting it are two scenarios of one study, and with the setting on the project they
+    cannot sit in one scenarios CSV -- the Brazil work had to stand up a second project purely
+    to flip it, which is the level being wrong.
+
+    assign_df_row_to_object_attributes already puts every scenario column on p, so a column
+    named additional_protected_class_labels arrives here as a string. Accepts a list (project
+    default), a space- or comma-separated string (scenario column), or blank/NaN for none.
+    """
+    value = getattr(p, 'additional_protected_class_labels', None)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    # A blank cell arrives as NaN through pandas.
+    if not text or text.lower() in ('nan', 'none'):
+        return []
+    return [part.strip() for part in text.replace(',', ' ').split() if part.strip()]
+
+
 def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_labels,
                                           all_class_indices, changing_class_labels,
                                           additional_protected_class_labels=None):

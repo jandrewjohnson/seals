@@ -263,7 +263,7 @@ def combined_trained_coefficients(p):
             #
             # Writing one file loses nothing: these zeros carry no fitted information, so the
             # neutral form is recovered by setting the constraint rows back to 1.0.
-            additional_protected = getattr(p, 'additional_protected_class_labels', [])
+            additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
             protected = seals_utils.protected_class_labels(
                 p.all_class_labels, p.changing_class_labels, additional_protected)
             if protected:
@@ -2694,7 +2694,7 @@ def stitched_lulc_simplified_scenarios(p):
                             p.all_class_labels,
                             p.all_class_indices,
                             p.changing_class_labels,
-                            getattr(p, 'additional_protected_class_labels', None),
+                            seals_utils.resolve_additional_protected_class_labels(p),
                         )
 
                     # POSSIBLE STARTING POINT: I have no idea why, but the areas in the NORTH outside of the aereg but inside the bb have change, but the areas IN the aezreg don't have change.
