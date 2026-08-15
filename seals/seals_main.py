@@ -2702,7 +2702,7 @@ def stitched_lulc_simplified_scenarios(p):
                     # Compare against the SIMPLIFIED base map. p.base_year_lulc_path is the RAW
                     # source LULC, whose codes mean different classes, so comparing the two
                     # reports millions of impossible conversions. Caught by a live run 2026-08-15.
-                    simplified_base = (getattr(p, 'lulc_simplified_paths', {}) or {}).get(p.key_base_year)
+                    simplified_base = (getattr(p, 'lulc_simplified_paths', None) or {}).get(p.key_base_year)
                     if hb.path_exists(p.lulc_projected_stitched_path) and simplified_base:
                         seals_utils.assert_non_changing_classes_unchanged(
                             p.lulc_projected_stitched_path,

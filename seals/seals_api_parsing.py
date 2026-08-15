@@ -277,9 +277,6 @@ def set_derived_attributes(p):
     # classes are derived above; anything further is a scenario statement rather than a
     # property of the correspondences, so it has to be named. Urban is the standing example,
     # since it expands but built land is not un-built.
-    if getattr(p, 'additional_protected_class_labels', None) is None:
-        p.additional_protected_class_labels = []
-
 
     p.changing_coarse_correspondence_class_indices = [int(i) for i in p.coarse_correspondence_class_indices if i not in p.nonchanging_class_indices] # These are the indices of classes THAT CAN EXPAND/CONTRACT
     p.changing_coarse_correspondence_class_labels = [str(p.coarse_correspondence_dict['dst_ids_to_labels'][i]) for i in p.changing_coarse_correspondence_class_indices if i not in p.nonchanging_class_indices]
