@@ -50,7 +50,10 @@ def test_zero_count_matches_the_shipped_production_shape():
                                      additional_protected_class_labels=['urban'])
 
     cc = [c for c in out.columns if c.startswith('class_')]
-    assert int((out[out['type'] == 'multiplicative'][cc] == 0).sum().sum()) == 3 * 5 * 1840
+    protected_zeros = 3 * 5
+    diagonal_zeros = len([c for c in SEALS7_CHANGING if c != 'urban'])
+    assert int((out[out['type'] == 'multiplicative'][cc] == 0).sum().sum()) == (
+        protected_zeros + diagonal_zeros) * 1840
 
 
 def test_fitted_coefficients_are_untouched():

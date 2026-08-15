@@ -1778,21 +1778,35 @@ def apply_presence_constraints(coefficients_df, all_class_labels, changing_class
     # '<class>_presence_constraint', older ones '<class>_constraint'. Match either, so this
     # works on a file whichever generated it.
     present = set(out.loc[out['type'] == 'multiplicative', 'spatial_regressor_name'])
-    constraint_names, missing = [], []
-    for label in excluded:
-        candidates = [label + '_presence_constraint', label + '_constraint']
-        found = [c for c in candidates if c in present]
-        if found:
-            constraint_names.extend(found)
-        else:
-            missing.append(label)
+
+    def constraint_row_name(label):
+        """Newer tables name the row '<class>_presence_constraint', older ones '<class>_constraint'."""
+        for candidate in (label + '_presence_constraint', label + '_constraint'):
+            if candidate in present:
+                return candidate
+        return None
+
+    constraint_names = [constraint_row_name(c) for c in excluded]
+    missing = [c for c, name in zip(excluded, constraint_names) if name is None]
+    constraint_names = [n for n in constraint_names if n]
 
     if missing:
         raise ValueError('no constraint row to zero for: %s. The class must be in the land-cover '
                          'correspondence so the row is generated.' % ', '.join(missing))
 
-    rows = (out['type'] == 'multiplicative') & out['spatial_regressor_name'].isin(constraint_names)
-    out.loc[rows, class_columns] = 0.0
+    constraint_rows = out['type'] == 'multiplicative'
+    column_for = dict(zip(coefficient_class_labels(out), class_columns))
+
+    out.loc[constraint_rows, class_columns] = 1.0
+
+    for label in changing_class_labels:
+        name = constraint_row_name(label)
+        if name:
+            out.loc[constraint_rows & (out['spatial_regressor_name'] == name),
+                    column_for[label]] = 0.0
+
+    out.loc[constraint_rows & out['spatial_regressor_name'].isin(constraint_names),
+            class_columns] = 0.0
 
     fitted = out['type'] != 'multiplicative'
     if not out.loc[fitted, class_columns].equals(coefficients_df.loc[fitted, class_columns]):

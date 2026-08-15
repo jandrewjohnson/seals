@@ -1945,6 +1945,18 @@ def allocation_zones(p):
             else:
                 hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
 
+            # Rebuild the constraint block for THIS run, discarding what the file carried. We
+            # train unconstrained and allocate constrained, so the block belongs to the scenario
+            # rather than to the calibration that produced the file. water/other/othernat need no
+            # declaration -- they are derived, having no coarse budget in this configuration.
+            if scheme_labels:
+                additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, scheme_labels, additional_protected)
+                hb.log('Rebuilt presence constraints; protected: ' + ', '.join(
+                    seals_utils.protected_class_labels(
+                        p.all_class_labels, scheme_labels, additional_protected)))
+
             # Point the presence constraints at this run's own layer for the year it allocates
             # from, rather than trusting the path baked in when the coefficients were produced.
             # That path names the calibration's project and the year it was trained to, so a
