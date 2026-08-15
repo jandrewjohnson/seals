@@ -2687,10 +2687,14 @@ def stitched_lulc_simplified_scenarios(p):
                     # Assert here, at the task that produces the artefact, rather than in a
                     # downstream consumer: the map must not leave this function in a state no
                     # one checked. See seals_utils.assert_non_changing_classes_unchanged.
-                    if hb.path_exists(p.lulc_projected_stitched_path):
+                    # Compare against the SIMPLIFIED base map. p.base_year_lulc_path is the RAW
+                    # source LULC, whose codes mean different classes, so comparing the two
+                    # reports millions of impossible conversions. Caught by a live run 2026-08-15.
+                    simplified_base = (getattr(p, 'lulc_simplified_paths', {}) or {}).get(p.key_base_year)
+                    if hb.path_exists(p.lulc_projected_stitched_path) and simplified_base:
                         seals_utils.assert_non_changing_classes_unchanged(
                             p.lulc_projected_stitched_path,
-                            p.base_year_lulc_path,
+                            simplified_base,
                             p.all_class_labels,
                             p.all_class_indices,
                             p.changing_class_labels,

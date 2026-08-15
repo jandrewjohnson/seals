@@ -188,3 +188,27 @@ def test_two_scenarios_can_differ(scene):
     seals_utils.assert_non_changing_classes_unchanged(
         p, b, SEALS7_LABELS, SEALS7_INDICES, SEALS7_CHANGING,
         seals_utils.resolve_additional_protected_class_labels(unprotected))
+
+
+def test_raw_source_lulc_is_refused_not_falsely_flagged(scene, capsys):
+    """The regression: handing this the RAW LULC instead of the simplified map.
+
+    The two use the same small integers for different classes -- MapBiomas 6 is
+    floodable_forest where seals7 6 is water -- so a naive comparison reports millions of
+    impossible conversions with total confidence. A live Brazil run produced exactly that,
+    4,029,747 'water -> forest' pixels, before the call site was corrected. The function must
+    recognise a foreign scheme and decline rather than accuse.
+    """
+    base, tmp = scene
+    raw = base.copy()
+    raw[0, :] = 39            # soybean in MapBiomas; no such class in seals7
+    raw[1, :] = 21            # mosaic_of_uses
+    b = write(tmp / 'raw_base.tif', raw)
+    p = write(tmp / 'projected.tif', base.copy())
+
+    seals_utils.assert_non_changing_classes_unchanged(
+        p, b, SEALS7_LABELS, SEALS7_INDICES, SEALS7_CHANGING, ['urban'])
+
+    out = capsys.readouterr().out
+    assert 'NOT CHECKED' in out
+    assert '39' in out or '21' in out          # names what it did not recognise

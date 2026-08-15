@@ -1672,6 +1672,26 @@ def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_l
                   (base_ds.RasterXSize, base_ds.RasterYSize), projected_path))
         return
 
+    # Refuse to compare rasters from different class schemes. The raw source LULC and the
+    # simplified map use the same small integers for DIFFERENT classes -- MapBiomas 6 is
+    # floodable_forest where seals7 6 is water -- so comparing them reports millions of
+    # impossible conversions with total confidence. Handing this the raw map instead of the
+    # simplified one is an easy mistake; it was made, and a live run caught it. Sample the
+    # base cheaply and bail if it carries values this scheme does not define.
+    known = set(int(i) for i in all_class_indices)
+    sample = base_ds.GetRasterBand(1).ReadAsArray(
+        0, 0, base_ds.RasterXSize, base_ds.RasterYSize,
+        buf_xsize=max(1, min(base_ds.RasterXSize, 512)),
+        buf_ysize=max(1, min(base_ds.RasterYSize, 512)))
+    seen = set(int(v) for v in np.unique(sample) if v > 0)
+    stray = sorted(seen - known)
+    if stray:
+        hb.log('  non-changing check: NOT CHECKED, the base map carries values this scheme does '
+               'not define (%s). It looks like the RAW source LULC rather than the simplified '
+               'map. base: %s' % (', '.join(str(s) for s in stray[:8]), base_path))
+        projected_ds = base_ds = None
+        return
+
     wanted = [(c, label_to_index[c]) for c in derived + declared if c in label_to_index]
     left = {label: 0 for label, _ in wanted}
     destinations = {label: {} for label, _ in wanted}
