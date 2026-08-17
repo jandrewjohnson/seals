@@ -1791,7 +1791,14 @@ def apply_presence_constraints(coefficients_df, all_class_labels, changing_class
         raise ValueError('no constraint row to zero for: %s. The class must be in the land-cover '
                          'correspondence so the row is generated.' % ', '.join(missing))
 
-    constraint_rows = out['type'] == 'multiplicative'
+    # Only the CLASS-constraint rows belong to this function. A multiplicative row named for
+    # something else is a scenario layer -- a protection mask, say -- carrying an assumption
+    # this function knows nothing about, so resetting it would silently switch that assumption
+    # off. Verified: rebuilding over a 30by30 protection row turned 0,0,0,1,1 into 1,1,1,1,1,
+    # disabling the protection with no error and a perfectly plausible map.
+    class_constraint_names = {n for n in (constraint_row_name(c) for c in all_class_labels) if n}
+    constraint_rows = ((out['type'] == 'multiplicative')
+                       & out['spatial_regressor_name'].isin(class_constraint_names))
     column_for = dict(zip(coefficient_class_labels(out), class_columns))
 
     out.loc[constraint_rows, class_columns] = 1.0

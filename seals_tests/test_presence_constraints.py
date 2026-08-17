@@ -114,3 +114,26 @@ def test_the_older_constraint_row_naming_is_matched():
     cc = [c for c in out.columns if c.startswith('class_')]
     water = out[out['spatial_regressor_name'] == 'water_constraint']
     assert (water[cc] == 0).all().all()
+
+
+def test_a_protection_layer_row_is_not_reset():
+    """A multiplicative row that is not a class constraint belongs to the scenario, not here.
+
+    Protection scenarios (WDPA, 30by30, HalfEarth) are encoded as one extra multiplicative row
+    named for the mask, e.g. 30by30 with urban/cropland/grassland 0 and forest/othernat 1.
+    Rebuilding the block reset EVERY multiplicative row, so that row became all 1.0 and the
+    protection silently switched off -- no error, a plausible map. Found 2026-08-17 while
+    building the 30by30 and HalfEarth sets.
+    """
+    d = coefficients(SEALS7_ALL, SEALS7_CHANGING)
+    protection = {'spatial_regressor_name': '30by30', 'type': 'multiplicative',
+                  'calibration_block_index': 0,
+                  **{'class_' + c: v for c, v in zip(SEALS7_CHANGING, [0.0, 0.0, 0.0, 1.0, 1.0])}}
+    d = pd.concat([d, pd.DataFrame([protection])], ignore_index=True)
+
+    out = apply_presence_constraints(d, SEALS7_ALL, SEALS7_CHANGING,
+                                     additional_protected_class_labels=['urban'])
+
+    cc = ['class_' + c for c in SEALS7_CHANGING]
+    row = out[out['spatial_regressor_name'] == '30by30'][cc].iloc[0].tolist()
+    assert row == [0.0, 0.0, 0.0, 1.0, 1.0], 'the protection row was rebuilt away'
