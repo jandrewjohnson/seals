@@ -272,6 +272,11 @@ def set_derived_attributes(p):
     # Define the nonchanging class indices as anything in the lulc simplification classes that is not in the coarse simplification classes
     p.nonchanging_class_indices = [int(i) for i in p.lulc_correspondence_class_indices if i not in p.coarse_correspondence_class_indices] # These are the indices of classes THAT CANNOT EXPAND/CONTRACT
 
+    # Classes a project wants protected beyond the non-changing ones: classes nothing may
+    # expand onto even though they do have a coarse demand. Empty by default. The no-demand
+    # classes are derived above; anything further is a scenario statement rather than a
+    # property of the correspondences, so it has to be named. Urban is the standing example,
+    # since it expands but built land is not un-built.
 
     p.changing_coarse_correspondence_class_indices = [int(i) for i in p.coarse_correspondence_class_indices if i not in p.nonchanging_class_indices] # These are the indices of classes THAT CAN EXPAND/CONTRACT
     p.changing_coarse_correspondence_class_labels = [str(p.coarse_correspondence_dict['dst_ids_to_labels'][i]) for i in p.changing_coarse_correspondence_class_indices if i not in p.nonchanging_class_indices]

@@ -663,6 +663,11 @@ def set_derived_attributes(p):
     # Define the nonchanging class indices as anything in the lulc simplification classes that is not in the coarse simplification classes
     p.nonchanging_class_indices = [int(i) for i in p.lulc_correspondence_class_indices if i not in p.coarse_correspondence_class_indices] # These are the indices of classes THAT CANNOT EXPAND/CONTRACT
 
+    # Classes a project wants protected beyond the non-changing ones: classes nothing may
+    # expand onto even though they do have a coarse demand. Empty by default. The no-demand
+    # classes are derived above; anything further is a scenario statement rather than a
+    # property of the correspondences, so it has to be named. Urban is the standing example,
+    # since it expands but built land is not un-built.
 
     p.changing_coarse_correspondence_class_indices = [int(i) for i in p.coarse_correspondence_class_indices if i not in p.nonchanging_class_indices] # These are the indices of classes THAT CAN EXPAND/CONTRACT
     p.changing_coarse_correspondence_class_labels = [str(p.coarse_correspondence_dict['dst_ids_to_labels'][i]) for i in p.changing_coarse_correspondence_class_indices if i not in p.nonchanging_class_indices]
@@ -1504,3 +1509,404 @@ def combine_coarsified_regional_with_coarse_estimate(coarsified_path, coarse_est
         hb.raster_calculator_flex([coarsified_path, coarse_estimate_path], covariate_regavg_shift, output_path)
 
 
+
+
+# Columns a coefficient table carries that are not classes. Everything else is one, under
+# either naming convention: older files name the column after the class, newer ones prefix
+# it with class_.
+NON_CLASS_COEFFICIENT_COLUMNS = frozenset(
+    ['spatial_regressor_name', 'data_location', 'type', 'calibration_block_index'])
+
+
+def coefficient_class_columns(coefficients_df):
+    """The column names holding per-class values, under either naming convention."""
+    return [c for c in coefficients_df.columns
+            if c not in NON_CLASS_COEFFICIENT_COLUMNS and not str(c).startswith('Unnamed')]
+
+
+def coefficient_class_labels(coefficients_df):
+    """The class labels a coefficient table was fitted for, in column order."""
+    return [c[len('class_'):] if str(c).startswith('class_') else c
+            for c in coefficient_class_columns(coefficients_df)]
+
+
+def check_coefficients_match_class_scheme(coefficients_df, changing_class_labels,
+                                          coefficients_path=None):
+    """Raise if a coefficient table was fitted under a different class scheme.
+
+    A coefficient file only means anything alongside the correspondence it was fitted with.
+    Class ids move between schemes, because SEALS requires the classes that can change to
+    come first, so inserting one shifts every class after it. Reading a file under the wrong
+    scheme therefore misassigns classes **silently** and produces a plausible-looking map
+    rather than an error.
+
+    Only membership is checked, not column order. The per-class columns are selected by name
+    in the order the correspondence defines, so a file carrying the same classes in a
+    different order is read correctly.
+    """
+    found = coefficient_class_labels(coefficients_df)
+    expected = list(changing_class_labels)
+
+    missing = [c for c in expected if c not in found]
+
+    # Extra columns are not an error. The per-class columns are selected by name, so a file
+    # carrying classes this run does not need is read correctly and the surplus ignored. That
+    # is a real configuration: a coarse correspondence can route one class into another, so a
+    # run legitimately needs fewer classes than the file it was fitted with.
+    if not missing:
+        return
+
+    where = ' in ' + str(coefficients_path) if coefficients_path else ''
+    reason = ('the correspondence expects %s, which the file does not carry'
+              % ', '.join(missing))
+
+    raise ValueError(
+        'The trained coefficients%s were fitted for a different class scheme than the '
+        'correspondence this run uses: %s.\n'
+        '  correspondence: %s\n'
+        '  coefficients:   %s\n'
+        'Use the coefficient set fitted for this scheme, or point the scenario at the '
+        'correspondence these coefficients were fitted with.'
+        % (where, reason, ', '.join(expected) or '(none)', ', '.join(found) or '(none)'))
+
+
+def protected_class_labels(all_class_labels, changing_class_labels,
+                           additional_protected_class_labels=None):
+    """The classes nothing may be allocated onto.
+
+    Two different things, which is why no single rule produces the set:
+
+    The non-changing classes are derived. A class is non-changing if it appears in the
+    land-cover correspondence but not in the coarse one, meaning SEALS is given no budget
+    for it. Letting another class expand onto one would shrink it with nothing authorising
+    the loss, so the map would stop conserving area. That argument holds for any scheme, and
+    it is also what lets a project add a no-expansion area, a solar plant say, purely by
+    listing it in its own correspondence.
+
+    Anything further is a scenario statement and has to be named. Urban is the standing
+    example: it has a budget and does expand, so it is not non-changing, but built land is
+    not un-built and the allocator places expansion only, so urban taken by another class
+    could never be recovered.
+    """
+    protected = [c for c in all_class_labels if c not in set(changing_class_labels)]
+    for label in (additional_protected_class_labels or []):
+        if label not in protected:
+            protected.append(label)
+    return protected
+
+
+def resolve_additional_protected_class_labels(p):
+    """The classes this SCENARIO declares protected, from the scenario row or the project.
+
+    Belongs in the scenario CSV rather than on the project, because protecting a class is a
+    scenario statement, not a property of the correspondences. Protecting urban and not
+    protecting it are two scenarios of one study, and with the setting on the project they
+    cannot sit in one scenarios CSV -- the Brazil work had to stand up a second project purely
+    to flip it, which is the level being wrong.
+
+    assign_df_row_to_object_attributes already puts every scenario column on p, so a column
+    named additional_protected_class_labels arrives here as a string. Accepts a list (project
+    default), a space- or comma-separated string (scenario column), or blank/NaN for none.
+    """
+    value = getattr(p, 'additional_protected_class_labels', None)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    # A blank cell arrives as NaN through pandas.
+    if not text or text.lower() in ('nan', 'none'):
+        return []
+    return [part.strip() for part in text.replace(',', ' ').split() if part.strip()]
+
+
+def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_labels,
+                                          all_class_indices, changing_class_labels,
+                                          additional_protected_class_labels=None):
+    """Raise if the allocation moved land out of a class it was forbidden to touch.
+
+    The companion to check_coefficients_match_class_scheme. That one guards the INPUT, that
+    the coefficients belong to this scheme; this guards the OUTPUT, that the allocation
+    respected the presence constraints. They fail independently: a malformed constraint layer
+    or a kernel change violates only this one.
+
+    Worth asserting rather than reviewing, because the failure is invisible. A contaminated
+    run leaks a few hundred pixels out of a hundred thousand changed -- a well-formed map, no
+    exception, no NoData, nothing to grep for, and far too small to see on a 300 m map.
+
+    Two claims, deliberately separated, because they are true for different reasons and a
+    future config change should read as a decision rather than a bug:
+
+      derived   A non-changing class has no coarse budget, so nothing authorises a loss and
+                the map would stop conserving area. True for any scheme, always.
+      declared  An additionally protected class (urban is the standing case) DOES have a
+                budget and does expand. It is frozen by a scenario choice, so this half can
+                legitimately be relaxed by changing that choice.
+
+    Classes are resolved BY LABEL, never by id. Ids shift between schemes -- water is 6 under
+    seals7 and 7 under seals8 -- so a hardcoded id would check the wrong class and pass
+    confidently, which is the very failure this module exists to prevent.
+    """
+    import numpy as np
+    from osgeo import gdal
+
+    label_to_index = dict(zip(all_class_labels, all_class_indices))
+    derived = protected_class_labels(all_class_labels, changing_class_labels)
+    declared = [c for c in (additional_protected_class_labels or []) if c not in derived]
+
+    if not derived and not declared:
+        return
+
+    projected_ds, base_ds = gdal.Open(projected_path), gdal.Open(base_path)
+    if projected_ds is None or base_ds is None:
+        hb.log('  non-changing check: could not open both rasters; NOT CHECKED')
+        return
+    if (projected_ds.RasterXSize, projected_ds.RasterYSize) != (base_ds.RasterXSize, base_ds.RasterYSize):
+        # A forced-global-bb run legitimately differs in extent. Say so loudly rather than
+        # skipping quietly -- an unrun check must never look like a passed one.
+        hb.log('  non-changing check: NOT CHECKED, extent differs (%s vs %s). %s'
+               % ((projected_ds.RasterXSize, projected_ds.RasterYSize),
+                  (base_ds.RasterXSize, base_ds.RasterYSize), projected_path))
+        return
+
+    # Refuse to compare rasters from different class schemes. The raw source LULC and the
+    # simplified map use the same small integers for DIFFERENT classes -- MapBiomas 6 is
+    # floodable_forest where seals7 6 is water -- so comparing them reports millions of
+    # impossible conversions with total confidence. Handing this the raw map instead of the
+    # simplified one is an easy mistake; it was made, and a live run caught it. Sample the
+    # base cheaply and bail if it carries values this scheme does not define.
+    known = set(int(i) for i in all_class_indices)
+    sample = base_ds.GetRasterBand(1).ReadAsArray(
+        0, 0, base_ds.RasterXSize, base_ds.RasterYSize,
+        buf_xsize=max(1, min(base_ds.RasterXSize, 512)),
+        buf_ysize=max(1, min(base_ds.RasterYSize, 512)))
+    seen = set(int(v) for v in np.unique(sample) if v > 0)
+    stray = sorted(seen - known)
+    if stray:
+        hb.log('  non-changing check: NOT CHECKED, the base map carries values this scheme does '
+               'not define (%s). It looks like the RAW source LULC rather than the simplified '
+               'map. base: %s' % (', '.join(str(s) for s in stray[:8]), base_path))
+        projected_ds = base_ds = None
+        return
+
+    wanted = [(c, label_to_index[c]) for c in derived + declared if c in label_to_index]
+    left = {label: 0 for label, _ in wanted}
+    destinations = {label: {} for label, _ in wanted}
+
+    projected_band, base_band = projected_ds.GetRasterBand(1), base_ds.GetRasterBand(1)
+    n_rows, n_cols = projected_ds.RasterYSize, projected_ds.RasterXSize
+    step = max(1, min(2048, n_rows))
+    for row in range(0, n_rows, step):
+        rows = min(step, n_rows - row)
+        after = projected_band.ReadAsArray(0, row, n_cols, rows)
+        before = base_band.ReadAsArray(0, row, n_cols, rows)
+        for label, index in wanted:
+            moved = (before == index) & (after != index) & (after > 0)
+            n = int(moved.sum())
+            if not n:
+                continue
+            left[label] += n
+            for value, count in zip(*np.unique(after[moved], return_counts=True)):
+                destinations[label][int(value)] = destinations[label].get(int(value), 0) + int(count)
+    projected_ds = base_ds = None
+
+    index_to_label = {v: k for k, v in label_to_index.items()}
+
+    def describe(label):
+        top = sorted(destinations[label].items(), key=lambda kv: -kv[1])[:3]
+        return '%s: %d px -> %s' % (label, left[label],
+                                    ', '.join('%s %d' % (index_to_label.get(v, v), c) for v, c in top))
+
+    broken_derived = [c for c in derived if left.get(c)]
+    broken_declared = [c for c in declared if left.get(c)]
+
+    if broken_derived:
+        raise ValueError(
+            'The allocation moved land OUT of a non-changing class, which cannot be right: '
+            'these classes have no coarse budget, so nothing authorises the loss and the map '
+            'no longer conserves area.\n'
+            '  %s\n'
+            '  map:  %s\n'
+            '  base: %s\n'
+            'Non-changing classes are those in the land-cover correspondence but absent from '
+            'the coarse one. Check that the presence-constraint rows for them are zeroed in '
+            'the coefficient file this run used.'
+            % ('\n  '.join(describe(c) for c in broken_derived), projected_path, base_path))
+
+    if broken_declared:
+        raise ValueError(
+            'The allocation moved land OUT of a class this scenario declared protected via '
+            'additional_protected_class_labels.\n'
+            '  %s\n'
+            '  map:  %s\n'
+            'Unlike a non-changing class this one does have a coarse budget, so the freeze is '
+            'a scenario choice rather than an accounting requirement. Either the constraint '
+            'did not reach the coefficients, or the class should no longer be listed as '
+            'protected -- which is a decision, not a bug.'
+            % ('\n  '.join(describe(c) for c in broken_declared), projected_path))
+
+
+def apply_presence_constraints(coefficients_df, all_class_labels, changing_class_labels,
+                               additional_protected_class_labels=None):
+    """Zero the multiplicative rows of the classes nothing may be allocated onto.
+
+    A presence constraint says "no expanding class may take this cell". The rows are written
+    for every class when the starting values are generated; this sets the protected ones to
+    zero and leaves the rest neutral at 1.0.
+
+    Calibration cannot produce these. It fits coefficients only for the classes that change
+    and never learns that a class must be excluded, so the constraint rows come out of it
+    neutral and are imposed afterwards.
+
+    See protected_class_labels for which classes those are and why.
+
+    The fitted coefficients are never touched, so the result shares its calibration with the
+    input and the two remain directly comparable.
+    """
+    excluded = protected_class_labels(all_class_labels, changing_class_labels,
+                                      additional_protected_class_labels)
+
+    out = coefficients_df.copy()
+    class_columns = coefficient_class_columns(out)
+    if not class_columns:
+        raise ValueError('no per-class columns found; this does not look like a coefficient table')
+
+    # Two naming conventions are in circulation: newer tables call the row
+    # '<class>_presence_constraint', older ones '<class>_constraint'. Match either, so this
+    # works on a file whichever generated it.
+    present = set(out.loc[out['type'] == 'multiplicative', 'spatial_regressor_name'])
+
+    def constraint_row_name(label):
+        """Newer tables name the row '<class>_presence_constraint', older ones '<class>_constraint'."""
+        for candidate in (label + '_presence_constraint', label + '_constraint'):
+            if candidate in present:
+                return candidate
+        return None
+
+    constraint_names = [constraint_row_name(c) for c in excluded]
+    missing = [c for c, name in zip(excluded, constraint_names) if name is None]
+    constraint_names = [n for n in constraint_names if n]
+
+    if missing:
+        raise ValueError('no constraint row to zero for: %s. The class must be in the land-cover '
+                         'correspondence so the row is generated.' % ', '.join(missing))
+
+    # Only the CLASS-constraint rows belong to this function. A multiplicative row named for
+    # something else is a scenario layer -- a protection mask, say -- carrying an assumption
+    # this function knows nothing about, so resetting it would silently switch that assumption
+    # off. Verified: rebuilding over a 30by30 protection row turned 0,0,0,1,1 into 1,1,1,1,1,
+    # disabling the protection with no error and a perfectly plausible map.
+    class_constraint_names = {n for n in (constraint_row_name(c) for c in all_class_labels) if n}
+    constraint_rows = ((out['type'] == 'multiplicative')
+                       & out['spatial_regressor_name'].isin(class_constraint_names))
+    column_for = dict(zip(coefficient_class_labels(out), class_columns))
+
+    out.loc[constraint_rows, class_columns] = 1.0
+
+    for label in changing_class_labels:
+        name = constraint_row_name(label)
+        if name:
+            out.loc[constraint_rows & (out['spatial_regressor_name'] == name),
+                    column_for[label]] = 0.0
+
+    out.loc[constraint_rows & out['spatial_regressor_name'].isin(constraint_names),
+            class_columns] = 0.0
+
+    fitted = out['type'] != 'multiplicative'
+    if not out.loc[fitted, class_columns].equals(coefficients_df.loc[fitted, class_columns]):
+        raise ValueError('fitted coefficients changed; only constraint rows may be modified')
+
+    return out
+
+
+def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_src_label,
+                              lulc_simplification_label, base_year):
+    """Point each presence constraint at this run's own layer for the year it allocates from.
+
+    The constraint rows carry a path to a binary raster saying where the protected class is.
+    That path is written when the coefficients are produced, so it names the calibration's
+    project and the year it was trained to, and a file used anywhere else then points at a
+    directory that may not exist and a year that may not be the one being allocated from.
+
+    Both matter. A layer from before the base year marks positions that have since moved; a
+    layer from after it encodes land cover the run should not be able to see, which is how a
+    hindcast scored against a 2020 mask appeared to gain skill it had not earned.
+
+    Rebuilding the path here rather than editing the stored one also makes a coefficient set
+    portable: the same file can be allocated from any base year, and from any project.
+    """
+    import os
+
+    out = coefficients_df.copy()
+    rows = out['type'] == 'multiplicative'
+    suffixes = ('_presence_constraint', '_constraint')
+
+    for i in out.index[rows]:
+        name = str(out.at[i, 'spatial_regressor_name'])
+        label = next((name[:-len(s)] for s in suffixes if name.endswith(s)), None)
+        if label is None:
+            continue
+        out.at[i, 'data_location'] = os.path.join(
+            fine_processed_inputs_dir, 'lulc', lulc_src_label, lulc_simplification_label,
+            'binaries', str(base_year),
+            'binary_%s_%s_%s_%s.tif' % (lulc_src_label, lulc_simplification_label,
+                                        base_year, label))
+    return out
+
+
+def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=None,
+                         base_data_dir=None):
+    """Re-root the per-project inputs a coefficient file points at.
+
+    Most regressors are named by an absolute path written when the coefficients were fitted,
+    so a file calibrated on one machine or in one project names directories that need not
+    exist anywhere else. The layers themselves are not special: every project regenerates its
+    own binaries and convolutions under fine_processed_inputs, so the same file is available
+    locally under a different root.
+
+    Only paths containing intermediate/fine_processed_inputs are moved. Everything else, the
+    soil and climate covariates that live in base_data, is left alone, because those are
+    shared rather than per-project.
+    """
+    import os
+
+    marker = os.path.join('intermediate', 'fine_processed_inputs')
+    out = coefficients_df.copy()
+
+    import re
+
+    def rebase(value):
+        text = str(value)
+        at = text.find(marker)
+        if at < 0:
+            return value
+        tail = text[at + len(marker):].lstrip('/\\')
+        if base_year is not None:
+            # The layers are also year-stamped, in the directory and again in the filename,
+            # with the year the coefficients were fitted to. A run allocating from a different
+            # base year needs its own, and generates only that one.
+            found = re.search(r'/(19|20)\d{2}/', '/' + tail)
+            if found:
+                stale = found.group(0).strip('/')
+                tail = tail.replace(stale, str(base_year))
+        return os.path.join(fine_processed_inputs_dir, tail)
+
+    out['data_location'] = out['data_location'].map(rebase)
+
+    # The shared covariates are shared in CONTENT, not in location: base_data sits at a
+    # different root on every machine, so a path written on one names a directory that does
+    # not exist on another. Re-root those too, keeping everything below base_data intact.
+    if base_data_dir is not None:
+        bd = 'base_data'
+
+        def rebase_shared(value):
+            text = str(value)
+            at = text.find(bd)
+            if at < 0 or marker in text:
+                return value
+            tail = text[at + len(bd):].lstrip('/\\')
+            return os.path.join(base_data_dir, tail)
+
+        out['data_location'] = out['data_location'].map(rebase_shared)
+
+    return out

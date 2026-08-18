@@ -250,6 +250,27 @@ def combined_trained_coefficients(p):
             df = pd.concat(list_of_dfs, axis=0, ignore_index=True)
 
             hb.log('extract_calibration_from_project() found ' + str(len(extant_block_calibration_paths)) + ' calibration files.')
+
+            # Calibration cannot produce the constraints. It fits coefficients for the classes
+            # that change and never learns that a class must be excluded, so the constraint
+            # rows come out of it neutral and are imposed here, as the last step.
+            #
+            # The non-changing classes are derived: no coarse demand means expansion onto one
+            # would shrink it with nothing authorising the loss. A project adds anything
+            # further through additional_protected_class_labels, which is a scenario statement
+            # rather than something derivable. Urban is the standing example, since it has a
+            # budget and expands, but built land is not un-built.
+            #
+            # Writing one file loses nothing: these zeros carry no fitted information, so the
+            # neutral form is recovered by setting the constraint rows back to 1.0.
+            additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
+            protected = seals_utils.protected_class_labels(
+                p.all_class_labels, p.changing_class_labels, additional_protected)
+            if protected:
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, p.changing_class_labels, additional_protected)
+                hb.log('Imposed presence constraints on: ' + ', '.join(protected))
+
             df.to_csv(p.combined_calibration_file_path)
 
 
@@ -1914,6 +1935,45 @@ def allocation_zones(p):
             hb.log('Starting to read ' + calibration_parameters_path)
             df = pd.read_csv(calibration_parameters_path)
 
+            # Fail here rather than allocating with coefficients fitted for other classes.
+            # Class ids shift between schemes, so the wrong file misassigns classes silently
+            # and still produces a map.
+            scheme_labels = getattr(p, 'changing_class_labels', None)
+            if scheme_labels:
+                seals_utils.check_coefficients_match_class_scheme(
+                    df, scheme_labels, coefficients_path=calibration_parameters_path)
+            else:
+                hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
+
+            # Rebuild the constraint block for THIS run, discarding what the file carried. We
+            # train unconstrained and allocate constrained, so the block belongs to the scenario
+            # rather than to the calibration that produced the file. water/other/othernat need no
+            # declaration -- they are derived, having no coarse budget in this configuration.
+            if scheme_labels:
+                additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, scheme_labels, additional_protected)
+                hb.log('Rebuilt presence constraints; protected: ' + ', '.join(
+                    seals_utils.protected_class_labels(
+                        p.all_class_labels, scheme_labels, additional_protected)))
+
+            # Point the presence constraints at this run's own layer for the year it allocates
+            # from, rather than trusting the path baked in when the coefficients were produced.
+            # That path names the calibration's project and the year it was trained to, so a
+            # file used anywhere else points at a directory that need not exist and a year that
+            # need not be the base year. A layer from after the base year also encodes land
+            # cover the run should not see.
+            # Re-root the per-project regressor layers before anything reads them. A
+            # coefficient file fitted elsewhere names that project's directories, which need
+            # not exist here; every project generates its own copies under the same relative
+            # path. Shared covariates in base_data are untouched.
+            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year,
+                                                 p.base_data_dir)
+
+            df = seals_utils.resolve_constraint_layers(
+                df, p.fine_processed_inputs_dir, p.lulc_src_label,
+                p.lulc_simplification_label, p.key_base_year)
+
             # TODO This is bad. Fix it.
             # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
             # TODOOO AGAIN. Indeed, still bad.
@@ -2635,8 +2695,24 @@ def stitched_lulc_simplified_scenarios(p):
                                 #     hb.clip_raster_by_bb(p.lulc_simplified_paths[p.key_base_year], p.bb_of_tiles, p.local_output_base_map_path)
                     else:
                         hb.log('Skipping stitching ' + p.lulc_projected_stitched_path + ' because it already exists.')
-                    
-                    
+
+                    # Assert here, at the task that produces the artefact, rather than in a
+                    # downstream consumer: the map must not leave this function in a state no
+                    # one checked. See seals_utils.assert_non_changing_classes_unchanged.
+                    # Compare against the SIMPLIFIED base map. p.base_year_lulc_path is the RAW
+                    # source LULC, whose codes mean different classes, so comparing the two
+                    # reports millions of impossible conversions. Caught by a live run 2026-08-15.
+                    simplified_base = (getattr(p, 'lulc_simplified_paths', None) or {}).get(p.key_base_year)
+                    if hb.path_exists(p.lulc_projected_stitched_path) and simplified_base:
+                        seals_utils.assert_non_changing_classes_unchanged(
+                            p.lulc_projected_stitched_path,
+                            simplified_base,
+                            p.all_class_labels,
+                            p.all_class_indices,
+                            p.changing_class_labels,
+                            seals_utils.resolve_additional_protected_class_labels(p),
+                        )
+
                     # POSSIBLE STARTING POINT: I have no idea why, but the areas in the NORTH outside of the aereg but inside the bb have change, but the areas IN the aezreg don't have change.
                     if p.clip_to_aoi and p.aoi != 'global' and hb.path_exists(p.aoi_path):
                         hb.timer('start clip')
