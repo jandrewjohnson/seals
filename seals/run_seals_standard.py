@@ -6,9 +6,6 @@ from seals import seals_initialize_project
 
 
 def build_task_tree(p):
-    # This project's task tree: delegates unchanged to the shared library builder.
-    # Compose additional library subtrees or project-specific tasks here if the
-    # project's pipeline ever diverges; only tree construction belongs in this function.
     seals_initialize_project.build_standard_task_tree(p)
 
 
@@ -17,23 +14,13 @@ def run_project(p):
 
     Reads p.scenario_definitions_filename, and optionally p.tasks_to_skip. Returns p.
     """
-    # Must be set BEFORE the tree is built: the standard tree contains parallel
-    # iterator tasks, which read this at construction time.
-    p.run_in_parallel = 1
 
-    # IF YOU WANT TO LOOK AT THE MODEL LOGIC, INSPECT THIS FUNCTION.
+    p.run_in_parallel = 1 # Must be set BEFORE the tree is built: the standard tree contains parallel iterator tasks, which read this at construction time.
+    
     build_task_tree(p)
-    p.skip_tasks(p.tasks_to_skip)
 
-    # Project constants: no variant changes these, so they are set here rather
-    # than by the caller. The model checks base_data_dir for everything it needs
-    # and downloads anything missing; one base_data serves every project.
-    p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
+    # p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
 
-    # ProjectFlow downloads via p.get_path(). To pull from a non-default bucket,
-    # provide the name and credentials here. Otherwise the default public data is used.
-    p.data_credentials_path = None
-    p.input_bucket_name = None
 
     # How large a chunk to process at a time. 4 deg is about the max for 64gb systems.
     p.processing_resolution = 1.0 # In degrees. Must be in pyramid_compatible_resolutions
@@ -57,10 +44,8 @@ def run_project(p):
 
 
 if __name__ == '__main__':
-    # run_mode: 'check' resumes in place | 'fresh_intermediate' rebuilds all
-    # computation but keeps input/ (test projects only) | 'full' timestamps a new dir.
+    
     p = hb.ProjectFlow(project_name='seals_standard', run_mode='check')
     p.scenario_definitions_filename = 'standard_scenarios.csv'
-    # p.tasks_to_skip = ['stitched_lulc_simplified_scenarios']
 
     run_project(p)
