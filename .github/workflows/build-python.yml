@@ -45,21 +45,33 @@ jobs:
             - uses: actions/checkout@v4
               with:
                   fetch-depth: 0
+
             - name: Set up Python ${{ matrix.python-version }}
-              uses: mamba-org/setup-micromamba@v1
+              uses: mamba-org/setup-micromamba@v3
               with:
                   environment-name: env
                   create-args: >-
                       python=${{ matrix.python-version }}
                       python-build
+                      twine
+
             - name: Build wheel
               run: python -m build --wheel
+
             - name: Upload wheel
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: Wheel for ${{ matrix.os }}-py${{ matrix.python-version }}
                   path: dist/*.whl
                   compression-level: 0
+
+            - name: Add whls to release
+              if: github.event_name == 'release' && runner.os != 'Linux'
+              run: gh release upload ${{github.ref_name}} dist/*.whl
+
+            - name: Upload to pypi
+              if: github.event_name == 'release' && runner.os != 'Linux'
+              run: twine upload --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
 
 
     build-sdist:
@@ -70,18 +82,29 @@ jobs:
               with:
                   fetch-depth: 0
             - name: Set up Python 3.12
-              uses: mamba-org/setup-micromamba@v1
+              uses: mamba-org/setup-micromamba@v3
               with:
                   environment-name: env
                   create-args: >-
                       python=3.12
                       python-build
+                      twine
+
             - name: Build source distribution
               run: python -m build --sdist
+
             - name: Upload sdist
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: Source distribution
                   path: dist/*.tar.gz
                   compression-level: 0
+
+            - name: Add whls to release
+              if: github.event_name == 'release'
+              run: gh release upload ${{github.ref_name}} dist/*.tar.gz
+
+            - name: Upload to pypi
+              if: github.event_name == 'release'
+              run: twine upload --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
 
