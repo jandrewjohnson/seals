@@ -32,6 +32,7 @@ jobs:
                   python -m flake8 seals --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     build-wheels:
         name: Build wheels
+        needs: check-syntax-errors
         runs-on: ${{ matrix.os }}
         env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,6 +76,7 @@ jobs:
 
     build-sdist:
         name: Build source distribution
+        needs: check-syntax-errors
         runs-on: ubuntu-latest
         env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
