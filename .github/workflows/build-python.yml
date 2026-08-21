@@ -67,11 +67,11 @@ jobs:
 
             - name: Add whls to release
               if: github.event_name == 'release' && runner.os != 'Linux'
-              run: gh release upload ${{github.ref_name}} dist/*.whl
+              run: gh release upload --clobber ${{github.ref_name}} dist/*.whl
 
             - name: Upload to pypi
               if: github.event_name == 'release' && runner.os != 'Linux'
-              run: twine upload --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
+              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
 
 
     build-sdist:
@@ -105,9 +105,8 @@ jobs:
 
             - name: Add sdist to release
               if: github.event_name == 'release'
-              run: gh release upload ${{github.ref_name}} dist/*.tar.gz
+              run: gh release upload --clobber ${{github.ref_name}} dist/*.tar.gz
 
             - name: Upload to pypi
               if: github.event_name == 'release'
-              run: twine upload --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
-
+              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
