@@ -891,6 +891,8 @@ def coarse_extraction_btc(p):
 def coarse_extraction(p):
     # Extract coarse change from source
     doc = """Create a empty folder dir. This will hold all of the coarse intermediate outputs, such as per-year changes in lu hectarage. Naming convention matches source. After reclassification this will be in destination conventions.  """
+    
+    
     if p.run_this:
 
 
