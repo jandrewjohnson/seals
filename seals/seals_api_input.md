@@ -1,6 +1,6 @@
 # Setup parameters
 
--   Description: This file defines the input to a standard SEALS run. The markdown notation here is parsed to a csv file saved at scenario_definitions.csv, which follows the v2 scenario definitions schema specified in earth_economy_devstack/docs/scenario_definitions.qmd. Parsing conventions from v2 apply — an empty cell is the only null representation (never a "nan" or "none" literal), lists are single-space-separated within a cell, and paths always use forward slashes. If you have just installed SEALS, be sure to run the "run_test_standard.py" file to generate an example of the CSV for you to inspect, edit, or use as a template.
+-   Description: This file defines the input to a standard SEALS run. The markdown notation here is parsed to a csv file saved at scenario_definitions.csv, which follows the v2 scenario definitions schema specified in earth_economy_devstack/docs/proposed_changes.qmd. Parsing conventions from v2 apply — an empty cell is the only null representation (never a "nan" or "none" literal), lists are single-space-separated within a cell, and paths always use forward slashes. If you have just installed SEALS, be sure to run the "run_test_standard.py" file to generate an example of the CSV for you to inspect, edit, or use as a template.
 
 ## aoi
 
