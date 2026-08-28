@@ -18,6 +18,33 @@ from seals import config
 from seals import seals_tasks
 
 
+def initialize_project(p):
+    """Seals' model initializer for the new run-file anatomy: call after hb.initialize_parameters / hb.initialize_scenarios.
+
+    Bundles seals' model-specific setup so run files declare the seals stage with this one call
+    (mirrors gtappy_initialize_project.initialize_project). See the EE Spec ProjectFlow conventions.
+    """
+    # Ordering rule (EE Spec, ProjectFlow conventions): definitions loads come first.
+    # set_derived_attributes below reads scenario row-0 hydrated attributes, so a seals
+    # project must have its scenarios file initialized before this call.
+    if not hasattr(p, 'scenarios_df'):
+        raise RuntimeError('seals initialize_project(p) was called before the scenarios file was initialized: p.scenarios_df does not exist. Call hb.initialize_scenarios(p, p.scenario_definitions_filename) BEFORE any model initialize_project call (EE Spec ordering rule).')
+
+    set_advanced_options(p)
+
+    # Derived attributes (resolutions, correspondence dicts, class indices) from the hydrated scenario row.
+    seals_utils.set_derived_attributes(p)
+
+    # calibration_parameters_override_dict can be used in specific scenarios to e.g. not allow expansion
+    # of cropland into forest by overwriting the default calibration. Consumed by seals_main, so seals
+    # owns its definition (custody moved here from gtappy's initializers). Set project-specific
+    # overrides in the run file AFTER this call.
+    p.calibration_parameters_override_dict = {}
+
+    p.L = hb.get_logger(p.project_name)
+    hb.log('Created ProjectFlow object at ' + p.project_dir + '\n    from script ' + p.calling_script + '\n    with base_data set at ' + p.base_data_dir)
+
+
 def set_advanced_options(p):
 
     p.build_overviews_and_stats = 0  # For later fast-viewing, this can be enabled to write ovr files and geotiff stats files. NYI anywhere.
@@ -81,6 +108,13 @@ def set_advanced_options(p):
         p.aggregation_method_string = '' # No subset
 
 
+# Runtime scenarios-CSV generation was removed (2026-08): like gtappy, seals assumes the
+# CSV ships in the run file's tracked input_template/ (seeded to input/ on first run) or
+# resolves via p.get_path, which raises a structured error naming what is missing. The
+# generate-from-nothing capability returns typed and validated as
+# generate_scenarios_csv_from_model_spec when the model-spec registry lands (see
+# earth_economy_devstack/docs/model_spec.qmd). The legacy branch inside
+# initialize_scenario_definitions below remains only for the unconverted seals project fleet.
 def initialize_scenario_definitions(p):
     # TODOO NOTE: This has some dumb legacy code that needs to get fixed where it doesn't just TRUST that the get_path function works.
     # If the scenarios csv doesn't exist, generate it and put it in the input_dir

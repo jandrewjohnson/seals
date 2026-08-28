@@ -18,25 +18,19 @@ def run_project(p):
     p.run_in_parallel = 1 # Must be set BEFORE the tree is built: the standard tree contains parallel iterator tasks, which read this at construction time.
     
     build_task_tree(p)
-
-    # p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
-
+    p.skip_tasks(p.tasks_to_skip)
 
     # How large a chunk to process at a time. 4 deg is about the max for 64gb systems.
     p.processing_resolution = 1.0 # In degrees. Must be in pyramid_compatible_resolutions
 
     # Scenarios: the rows of work. The caller chose which CSV, because that is
-    # exactly what a variant run varies. SEALS generates a default in the
-    # project's input_dir if this is your first run.
-    p.scenario_definitions_path = os.path.join(p.input_dir, p.scenario_definitions_filename)
-    seals_initialize_project.initialize_scenario_definitions(p)
+    # exactly what a variant run varies. The CSV ships in input_template/ beside
+    # this run file and is seeded into input/ on first run.
+    hb.initialize_scenarios(p, p.scenario_definitions_filename)
 
-    seals_initialize_project.set_advanced_options(p)
-
-    p.L = hb.get_logger(p.project_name)
-    hb.log('Created ProjectFlow object at ' + p.project_dir +
-           '\n    from script ' + p.calling_script +
-           '\n    with base_data set at ' + p.base_data_dir)
+    # Seals' model initializer: advanced options, derived attributes, calibration
+    # override dict, logger. Must come after the scenarios load (EE Spec ordering rule).
+    seals_initialize_project.initialize_project(p)
 
     p.execute()
 
