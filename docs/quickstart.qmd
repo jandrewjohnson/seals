@@ -11,15 +11,15 @@ Two run files ship with SEALS, in `seals/seals/`:
 
 | file | what it runs |
 |------|--------------|
-| `run_seals_standard.py` | the standard pipeline: three scenarios, 2030 and 2050 |
-| `run_seals_standard_test.py` | the same pipeline pared down — baseline plus one BAU, one year, Rwanda |
+| `run_seals.py` | the standard pipeline: three scenarios, 2030 and 2050 |
+| `run_seals_test.py` | the same pipeline pared down — baseline plus one BAU, one year, Rwanda |
 
 Start with the test:
 
 ``` bash
 conda activate <your_env>
 cd seals/seals
-python run_seals_standard_test.py
+python run_seals_test.py
 ```
 
 Required base data is downloaded at runtime from a public bucket; no credentials
@@ -31,7 +31,7 @@ Not into the repo. Because the run file lives inside a cloned repo, ProjectFlow
 places the project directory just *outside* it:
 
 ```
-~/Files/seals/projects/seals_standard_test/
+~/Files/seals/projects/seals_test/
 ├── input/          seeded from the repo's input_template/
 ├── intermediate/   one folder per task
 └── output/
@@ -66,7 +66,7 @@ columns are documented in
 
 To run the same pipeline a second way — a smoke test, a different AOI — write a
 *second run file* that imports the first rather than copying it.
-`run_seals_standard_test.py` is the worked example, and the pattern is explained
+`run_seals_test.py` is the worked example, and the pattern is explained
 in [conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html).
 
 ## Next

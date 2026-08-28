@@ -40,25 +40,25 @@ Note that running SEALS on a Windows PC requires having a C/C++ compiler install
 ```bash
 conda activate <your_env>
 cd seals/seals
-python run_seals_standard.py
+python run_seals.py
 ```
 
 Outputs land in a Project file just outside of the repo, e.g. at 
-`~/Files/seals/projects/seals_standard/`, containing `input/`, `intermediate/`,
+`~/Files/seals/projects/seals/`, containing `input/`, `intermediate/`,
 `output/`, and one folder per task. Missing base data is downloaded on demand.
 
 Run it a second time and it finishes almost immediately — every task is behind an
 existence check, so completed work is skipped.
 
-For a faster first run, `run_seals_standard_test.py` uses the same task tree with
+For a faster first run, `run_seals_test.py` uses the same task tree with
 a pared scenarios CSV (baseline plus one BAU, one projection year, Rwanda).
 
 ## Repository layout
 
 | path | what |
 |------|------|
-| `seals/run_seals_standard.py` | the reference run; copy this to start a project |
-| `seals/run_seals_standard_test.py` | its pared variant |
+| `seals/run_seals.py` | the reference run; copy this to start a project |
+| `seals/run_seals_test.py` | its pared variant |
 | `seals/input_template/` | tracked definition CSVs, seeded into each project's `input/` |
 | `seals/seals_initialize_project.py` | task-tree builders and CSV hydration |
 | `seals/seals_main.py`, `seals_tasks.py`, `seals_generate_base_data.py`, … | task functions |

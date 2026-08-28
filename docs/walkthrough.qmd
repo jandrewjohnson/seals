@@ -18,7 +18,7 @@
     functions, the actual model logic
   - `seals_initialize_project.py` — the task-tree builders
   - `seals_utils.py` — helpers
-  - `run_seals_standard.py` — the run file
+  - `run_seals.py` — the run file
 
 ## Run files
 
@@ -26,10 +26,10 @@
 - A **run file** configures a project and executes a task tree built from the
   library's task functions
 - Two ship with SEALS, both in `seals/seals`:
-  - `run_seals_standard.py` — three scenarios, 2030 and 2050
-  - `run_seals_standard_test.py` — the same pipeline pared to a baseline, one
+  - `run_seals.py` — three scenarios, 2030 and 2050
+  - `run_seals_test.py` — the same pipeline pared to a baseline, one
     BAU scenario, one year, Rwanda. Start here
-- Open `run_seals_standard.py`. It is about 60 lines and has three parts
+- Open `run_seals.py`. It is about 60 lines and has three parts
 
 ## Part 1: the task tree
 
@@ -62,9 +62,9 @@ def run_project(p):
     p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
     p.processing_resolution = 1.0
 
-    p.scenario_definitions_path = os.path.join(p.input_dir, p.scenario_definitions_filename)
-    seals_initialize_project.initialize_scenario_definitions(p)
-    seals_initialize_project.set_advanced_options(p)
+    hb.initialize_scenarios(p, p.scenario_definitions_filename)
+    seals_initialize_project.initialize_project(p)   # seals' model initializer:
+    # advanced options + derived attributes; must come AFTER the scenarios load
 
     p.execute()
     return p
@@ -78,7 +78,7 @@ def run_project(p):
 
 ``` python
 if __name__ == '__main__':
-    p = hb.ProjectFlow(project_name='seals_standard', run_mode='check')
+    p = hb.ProjectFlow(project_name='seals', run_mode='check')
     p.scenario_definitions_filename = 'standard_scenarios.csv'
 
     run_project(p)
@@ -157,7 +157,7 @@ p.base_data_dir = os.path.join(p.user_dir, 'Files', 'base_data')
 ``` bash
 conda activate <your_env>
 cd seals/seals
-python run_seals_standard_test.py
+python run_seals_test.py
 ```
 
 - On startup SEALS prints the **task tree** it is about to compute
@@ -167,7 +167,7 @@ python run_seals_standard_test.py
 
 ## Find the output
 
-- Go to `~/Files/seals/projects/seals_standard_test/intermediate/`
+- Go to `~/Files/seals/projects/seals_test/intermediate/`
 - There is one directory per task in the tree
 - The downscaled maps are in `stitched_lulc_simplified_scenarios/`, for example:
 

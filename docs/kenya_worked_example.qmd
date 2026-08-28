@@ -178,7 +178,7 @@ This basic test verifies your installation is working correctly.
 
 **Steps:**
 
-1.  Locate `run_seals_standard.py` in `seals/seals/`
+1.  Locate `run_seals.py` in `seals/seals/`
 
 2.  Ensure your conda environment is activated:
 
@@ -189,7 +189,7 @@ This basic test verifies your installation is working correctly.
 3.  Run the script:
 
     ``` bash
-    python run_seals_standard.py
+    python run_seals.py
     ```
 
 4.  Check for output in:

@@ -39,7 +39,7 @@ def run_project(p):
 
 if __name__ == '__main__':
     
-    p = hb.ProjectFlow(project_name='seals_standard', run_mode='check')
+    p = hb.ProjectFlow(project_name='seals', run_mode='check')
     p.scenario_definitions_filename = 'standard_scenarios.csv'
 
     run_project(p)
