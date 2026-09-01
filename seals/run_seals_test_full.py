@@ -11,6 +11,5 @@ from run_seals import run_project
 if __name__ == '__main__':
     p = hb.ProjectFlow(project_name='seals_test', run_mode='full')
     p.scenario_definitions_filename = 'standard_scenarios_test.csv'
-    # p.tasks_to_skip = ['stitched_lulc_simplified_scenarios']
 
     run_project(p)

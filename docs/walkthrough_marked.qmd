@@ -232,5 +232,5 @@ lulc_esa_seals7_ssp2_rcp45_luh2-message_bau_2030.tif
 ::: r-fit-text
 - [Quickstart](quickstart.qmd) — the condensed version of this page
 - [Conventions](https://justinandrewjohnson.com/earth_economy_devstack/conventions.html) — the full run-file rules
-- [Project complexity](https://justinandrewjohnson.com/earth_economy_devstack/project_complexity.html) — why run files are shaped this way
+- [Project complexity](https://justinandrewjohnson.com/earth_economy_devstack/levels_of_complexity.html) — why run files are shaped this way
 :::
