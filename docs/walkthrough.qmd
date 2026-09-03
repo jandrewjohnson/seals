@@ -115,8 +115,8 @@ if __name__ == '__main__':
 - As the model iterates, it re-hydrates `p` from the row it is on — which is why
   scenario-varying values belong in the CSV and not in the run file
 - The tracked copy lives in `input_template/` beside the run file. ProjectFlow
-  copies anything missing into the project's `input/` on first run and never
-  overwrites your working copy
+  reads it there in place; a copy you put in the project's `input/` shadows it,
+  and a run warns if the template later changes underneath that copy
 - If the named file is nowhere to be found, SEALS generates a default so a first
   run still works
 

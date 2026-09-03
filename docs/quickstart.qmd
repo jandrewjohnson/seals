@@ -32,7 +32,7 @@ places the project directory just *outside* it:
 
 ```
 ~/Files/seals/projects/seals_test/
-├── input/          seeded from the repo's input_template/
+├── input/          your override copies only (the repo's input_template/ is read in place)
 ├── intermediate/   one folder per task
 └── output/
 ```
@@ -59,8 +59,8 @@ if __name__ == '__main__':
 resumes in a stable project dir; `'full'` timestamps a fresh one.
 
 Put your scenarios CSV in an `input_template/` directory beside the run file. It
-is tracked in git, and ProjectFlow copies anything missing into the project's
-untracked `input/` on first run without ever overwriting your working copy. The
+is tracked in git and ProjectFlow reads it there in place; a copy you place in the
+project's untracked `input/` shadows it. The
 columns are documented in
 [Custom scenarios](custom_scenarios.qmd).
 

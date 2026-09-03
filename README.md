@@ -59,7 +59,7 @@ a pared scenarios CSV (baseline plus one BAU, one projection year, Rwanda).
 |------|------|
 | `seals/run_seals.py` | the reference run; copy this to start a project |
 | `seals/run_seals_test.py` | its pared variant |
-| `seals/input_template/` | tracked definition CSVs, seeded into each project's `input/` |
+| `seals/input_template/` | tracked definition CSVs, read in place (a project's `input/` holds only overrides) |
 | `seals/seals_initialize_project.py` | task-tree builders and CSV hydration |
 | `seals/seals_main.py`, `seals_tasks.py`, `seals_generate_base_data.py`, … | task functions |
 | `seals/seals_utils.py` | helpers |

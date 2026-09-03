@@ -86,8 +86,9 @@ ssp2_rcp45_luh2-message_bau_shift,policy,RWA,ssp2,rcp45,luh2-message,bau_shift,2
 ## Where the file lives
 
 Put your scenarios CSV in an **`input_template/`** directory beside your run
-file. It is tracked in git; ProjectFlow copies anything missing into the
-project's untracked `input/` on first run and never overwrites the working copy.
+file. It is tracked in git and ProjectFlow reads it there in place; a copy you
+put in the project's untracked `input/` shadows it, and a run warns if the
+template later changes underneath that copy.
 Name it in your run file's `__main__` block:
 
 ```python

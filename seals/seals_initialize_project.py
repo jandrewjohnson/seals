@@ -109,7 +109,7 @@ def set_advanced_options(p):
 
 
 # Runtime scenarios-CSV generation was removed (2026-08): like gtappy, seals assumes the
-# CSV ships in the run file's tracked input_template/ (seeded to input/ on first run) or
+# CSV ships in the run file's tracked input_template/ (read in place, after input/) or
 # resolves via p.get_path, which raises a structured error naming what is missing. The
 # generate-from-nothing capability returns typed and validated as
 # generate_scenarios_csv_from_model_spec when the model-spec registry lands (see

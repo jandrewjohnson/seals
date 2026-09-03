@@ -139,6 +139,6 @@ Finally, the path to the regressor used during the downscaling must also be adde
 
 ![](images/magpie_scenario_definitions5.png)
 
-Save `scenario_definitions_tutorial.csv` in the `input_template/` directory beside your run file — it is tracked in git, and ProjectFlow copies it into the project's `input/` on first run. Then name it in the run file's `__main__` block with `p.scenario_definitions_filename = 'scenario_definitions_tutorial.csv'` and you are good to go.
+Save `scenario_definitions_tutorial.csv` in the `input_template/` directory beside your run file — it is tracked in git, and ProjectFlow reads it there in place (a copy in the project's `input/` would shadow it). Then name it in the run file's `__main__` block with `p.scenario_definitions_filename = 'scenario_definitions_tutorial.csv'` and you are good to go.
 
 ![](images/magpie_scenario_definitions6.png)
