@@ -50,6 +50,7 @@ jobs:
             - name: Set up Python ${{ matrix.python-version }}
               uses: mamba-org/setup-micromamba@v3
               with:
+                  init-shell: bash
                   environment-name: env
                   create-args: >-
                       python=${{ matrix.python-version }}
