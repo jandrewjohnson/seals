@@ -1,60 +1,112 @@
 name: Build packages
-on: [push, pull_request]
+on: 
+    release:
+        types: [published]
+    push:
+    pull_request:
 
 defaults:
     run:
         shell: bash -l {0}
 
 jobs:
+    check-syntax-errors:
+        name: Check for syntax errors
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Set up python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: '3.11'
+
+            - name: Set up environment
+              run: pip install flake8
+
+            - name: Lint with flake8
+              run: |
+                  set -ex
+                  # Check for Python syntax errors or undefined names
+                  python -m flake8 seals --count --select=E9,F63,F7,F82 --show-source --statistics
+                  # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+                  python -m flake8 seals --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     build-wheels:
         name: Build wheels
+        #needs: check-syntax-errors
         runs-on: ${{ matrix.os }}
+        env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         strategy:
             fail-fast: false
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
-                python-version: [3.9, "3.10", "3.11", "3.12", "3.13"]
+                python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
               with:
                   fetch-depth: 0
-            - name: Set up Python ${{ matrix.python-version }}
-              uses: mamba-org/setup-micromamba@v1
+
+            - uses: actions/setup-python@v7
+              name: Set up Python ${{ matrix.python-version }}
               with:
-                  environment-name: env
-                  create-args: >-
-                      python=${{ matrix.python-version }}
-                      python-build
+                python-version: ${{ matrix.python-version }}
+
+            - name: Install build dependencies
+              run: pip install build twine setuptools_scm
+
             - name: Build wheel
               run: python -m build --wheel
+
             - name: Upload wheel
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: Wheel for ${{ matrix.os }}-py${{ matrix.python-version }}
                   path: dist/*.whl
                   compression-level: 0
 
+            - name: Add whls to release
+              if: github.event_name == 'release' && runner.os != 'Linux'
+              run: gh release upload --clobber ${{github.ref_name}} dist/*.whl
+
+            - name: Upload to pypi
+              if: github.event_name == 'release' && runner.os != 'Linux'
+              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
+
 
     build-sdist:
         name: Build source distribution
+        #needs: check-syntax-errors
         runs-on: ubuntu-latest
+        env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
               with:
                   fetch-depth: 0
-            - name: Set up Python 3.12
-              uses: mamba-org/setup-micromamba@v1
+
+            - uses: actions/setup-python@v7
+              name: Set up Python 3.12
               with:
-                  environment-name: env
-                  create-args: >-
-                      python=3.12
-                      python-build
+                python-version: "3.12"
+
+            - name: Install build dependencies
+              run: pip install build twine setuptools_scm
+
             - name: Build source distribution
               run: python -m build --sdist
+
             - name: Upload sdist
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: Source distribution
                   path: dist/*.tar.gz
                   compression-level: 0
 
+            - name: Add sdist to release
+              if: github.event_name == 'release'
+              run: gh release upload --clobber ${{github.ref_name}} dist/*.tar.gz
+
+            - name: Upload to pypi
+              if: github.event_name == 'release'
+              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
