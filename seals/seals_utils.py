@@ -1912,6 +1912,35 @@ def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=N
     return out
 
 
+def coarse_years_available(source_dir):
+    """The years the coarse model has a state for here, read off the directory names."""
+    if not os.path.isdir(source_dir):
+        return []
+    return sorted(int(name) for name in os.listdir(source_dir)
+                  if name.isdigit() and os.path.isdir(os.path.join(source_dir, name)))
+
+
+def bracketing_coarse_years(source_dir, target_year):
+    """The two available coarse years either side of target_year, or None if it needs no interpolation.
+
+    Read from the data rather than named in a config, so a coarse model with different time steps
+    needs no edit and a target year that IS a step is correctly left alone.
+
+    Returns:
+        tuple or None: (earlier, later), or None when target_year is already available or cannot be
+        bracketed.
+    """
+    years = coarse_years_available(source_dir)
+    target_year = int(target_year)
+    if target_year in years:
+        return None
+    earlier = [y for y in years if y < target_year]
+    later = [y for y in years if y > target_year]
+    if not earlier or not later:
+        return None
+    return max(earlier), min(later)
+
+
 def interpolate_coarse_state_at_year(source_dir, target_year, bracketing_years, filename_template,
                                      match_path=None):
     """Write a coarse state for a year the coarse model has no time step at, from the two it brackets.
