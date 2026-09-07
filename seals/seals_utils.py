@@ -1910,3 +1910,54 @@ def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=N
         out['data_location'] = out['data_location'].map(rebase_shared)
 
     return out
+
+
+def interpolate_coarse_state_at_year(source_dir, target_year, bracketing_years, filename_template,
+                                     match_path=None):
+    """Write a coarse state for a year the coarse model has no time step at, from the two it brackets.
+
+    Coarse land-use models step every five years, so a fine base year taken from observed land cover
+    (ESA 2022, relabelled 2023) has no matching coarse state. Differencing from the nearest step
+    instead spans a longer interval than the run does -- 2020->2030 where 2023->2030 belongs -- and
+    that matters because the coarse map enters allocation as an ANOMALY added to the regional total
+    (covariate_sum_shift), so its amplitude is not renormalised away. A 10-year anomaly used for a
+    7-year interval overstates the spatial contrast by 10/7.
+
+    Linear between the brackets, which is the assumption the alternative makes anyway, over a five-
+    year gap instead of a ten-year one.
+
+    Args:
+        source_dir (str): directory holding one subdirectory per coarse year.
+        target_year (int): the year to write, e.g. 2023.
+        bracketing_years (tuple): the two coarse years around it, e.g. (2020, 2025).
+        filename_template (str): filename with {year} where the year appears.
+        match_path (str): raster whose geotransform the output copies; defaults to the earlier bracket's.
+
+    Returns:
+        list: the paths written.
+
+    Raises:
+        NameError: if target_year is not strictly between the brackets, or a bracket file is absent.
+    """
+    earlier, later = int(bracketing_years[0]), int(bracketing_years[1])
+    target_year = int(target_year)
+    if not earlier < target_year < later:
+        raise NameError('%d is not strictly between the bracketing years %d and %d'
+                        % (target_year, earlier, later))
+    weight = (target_year - earlier) / (later - earlier)
+
+    dst_dir = os.path.join(source_dir, str(target_year))
+    hb.create_directories(dst_dir)
+    earlier_path = os.path.join(source_dir, str(earlier), filename_template.format(year=earlier))
+    later_path = os.path.join(source_dir, str(later), filename_template.format(year=later))
+    for path in (earlier_path, later_path):
+        if not hb.path_exists(path):
+            raise NameError('cannot interpolate %d: %s is missing' % (target_year, path))
+    dst_path = os.path.join(dst_dir, filename_template.format(year=target_year))
+    if hb.path_exists(dst_path):
+        return []
+    earlier_array = hb.as_array(earlier_path).astype('float64')
+    later_array = hb.as_array(later_path).astype('float64')
+    hb.save_array_as_geotiff(earlier_array + weight * (later_array - earlier_array),
+                             dst_path, match_path or earlier_path)
+    return [dst_path]
