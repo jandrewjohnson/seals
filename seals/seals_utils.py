@@ -1,4 +1,4 @@
-import logging, os, math, sys
+import logging, os, math, sys, json
 from osgeo import gdal
 import numpy as np
 import scipy
@@ -1618,6 +1618,40 @@ def resolve_additional_protected_class_labels(p):
     if not text or text.lower() in ('nan', 'none'):
         return []
     return [part.strip() for part in text.replace(',', ' ').split() if part.strip()]
+
+
+def _stitched_check_record_path(projected_path):
+    return projected_path + '.non_changing_check.json'
+
+
+def _stitched_check_record(projected_path, base_path):
+    """The record of a passed non-changing check: size and mtime of the two rasters it read."""
+    record = {}
+    for label, path in (('map', projected_path), ('base', base_path)):
+        st = os.stat(path)
+        record[label] = {'path': str(path), 'size': st.st_size, 'mtime': st.st_mtime}
+    return record
+
+
+def stitched_map_already_checked(projected_path, base_path):
+    """True when the non-changing-classes check already passed on these very files (same size and
+    mtime of map and base). A rebuilt or touched map is checked again; a missing record means the
+    map predates the record and is checked once more."""
+    record_path = _stitched_check_record_path(projected_path)
+    if not os.path.exists(record_path):
+        return False
+    try:
+        with open(record_path, encoding='utf-8') as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return old == _stitched_check_record(projected_path, base_path)
+
+
+def record_stitched_map_checked(projected_path, base_path):
+    """Write the record a passed check leaves beside the map."""
+    with open(_stitched_check_record_path(projected_path), 'w', encoding='utf-8') as f:
+        json.dump(_stitched_check_record(projected_path, base_path), f, indent=2)
 
 
 def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_labels,

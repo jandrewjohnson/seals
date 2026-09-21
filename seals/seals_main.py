@@ -2595,16 +2595,15 @@ def stitched_lulc_simplified_scenarios(p):
                     include_string = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year) + '.tif'
                     target_dir = os.path.join(p.allocations_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
 
-
-                    p.layers_to_stitch = hb.list_filtered_paths_recursively(target_dir, include_strings=include_string, include_extensions='.tif', depth=None)
-
-
                     stitched_output_name = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year)
 
 
                     p.lulc_projected_stitched_path = os.path.join(p.cur_dir, stitched_output_name + '.tif')
 
                     if not hb.path_exists(p.lulc_projected_stitched_path):
+                        # Walking the allocation zones is minutes per map on a shared filesystem; it is
+                        # only needed when there is something to stitch.
+                        p.layers_to_stitch = hb.list_filtered_paths_recursively(target_dir, include_strings=include_string, include_extensions='.tif', depth=None)
                         if len(p.layers_to_stitch) > 0:
                             hb.log('Stitching for year ' + str(year))
                             hb.log('Stitching ' + str(len(p.layers_to_stitch)) + ' layers, first 1 of which was: ' + str(p.layers_to_stitch[:1]))
@@ -2702,16 +2701,22 @@ def stitched_lulc_simplified_scenarios(p):
                     # Compare against the SIMPLIFIED base map. p.base_year_lulc_path is the RAW
                     # source LULC, whose codes mean different classes, so comparing the two
                     # reports millions of impossible conversions. Caught by a live run 2026-08-15.
+                    # The check reads the whole map (about a minute each at 300 m); its verdict is
+                    # recorded beside the map so a later pass over an unchanged map does not repeat it.
                     simplified_base = (getattr(p, 'lulc_simplified_paths', None) or {}).get(p.key_base_year)
                     if hb.path_exists(p.lulc_projected_stitched_path) and simplified_base:
-                        seals_utils.assert_non_changing_classes_unchanged(
-                            p.lulc_projected_stitched_path,
-                            simplified_base,
-                            p.all_class_labels,
-                            p.all_class_indices,
-                            p.changing_class_labels,
-                            seals_utils.resolve_additional_protected_class_labels(p),
-                        )
+                        if seals_utils.stitched_map_already_checked(p.lulc_projected_stitched_path, simplified_base):
+                            hb.log('  non-changing check: recorded for ' + os.path.basename(p.lulc_projected_stitched_path) + ', not repeated')
+                        else:
+                            seals_utils.assert_non_changing_classes_unchanged(
+                                p.lulc_projected_stitched_path,
+                                simplified_base,
+                                p.all_class_labels,
+                                p.all_class_indices,
+                                p.changing_class_labels,
+                                seals_utils.resolve_additional_protected_class_labels(p),
+                            )
+                            seals_utils.record_stitched_map_checked(p.lulc_projected_stitched_path, simplified_base)
 
                     # POSSIBLE STARTING POINT: I have no idea why, but the areas in the NORTH outside of the aereg but inside the bb have change, but the areas IN the aezreg don't have change.
                     if p.clip_to_aoi and p.aoi != 'global' and hb.path_exists(p.aoi_path):
