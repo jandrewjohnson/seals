@@ -73,7 +73,7 @@ jobs:
 
             - name: Upload to pypi
               if: github.event_name == 'release' && runner.os != 'Linux'
-              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
+              run: twine upload --skip-existing --verbose --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.whl
 
 
     build-sdist:
@@ -113,4 +113,4 @@ jobs:
 
             - name: Upload to pypi
               if: github.event_name == 'release'
-              run: twine upload --skip-existing --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
+              run: twine upload --skip-existing --verbose --username="__token__" --password=${{secrets.PYPI_APIKEY}} dist/*.tar.gz
