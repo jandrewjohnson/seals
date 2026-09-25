@@ -34,6 +34,8 @@ jobs:
     build-wheels:
         name: Build wheels
         #needs: check-syntax-errors
+        permissions:
+            contents: write
         runs-on: ${{ matrix.os }}
         env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,6 +80,8 @@ jobs:
         name: Build source distribution
         #needs: check-syntax-errors
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         steps:
