@@ -2162,8 +2162,8 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
 
     Raises:
         ValueError: if the two LULC rasters or the hectares raster are not on one grid, if a demand
-            raster carries a non-finite value it does not declare as nodata, or if it does not
-            cover the fine grid.
+            raster carries a non-finite value it does not declare as nodata, if it marks a cell
+            holding allocatable land as nodata, or if it does not cover the fine grid.
     """
     import numpy as np
     import pandas as pd
@@ -2181,13 +2181,17 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
         with rasterio.open(path) as c:
             demand, coarse, shape = c.read(1).astype(np.float64), c.transform, c.shape
             ndv = c.nodata
+        # Nodata is only ever accepted OUTSIDE the allocation footprint. A cell holding allocatable
+        # land whose demand is nodata has a MISSING demand, which is not the same as no change, and
+        # reading it as zero would report that cell as satisfied. The footprint is not known until
+        # the starting stock is summed, so the mask is carried down to the check below.
         if ndv is not None and np.isfinite(ndv):
-            demand[demand == ndv] = 0.0
+            missing = demand == ndv
         elif ndv is not None:
-            # A raster declaring a non-finite nodata says its non-finite cells are UNMEASURED, so
-            # they carry no demand. A non-finite cell in a raster that declares no nodata, or a
-            # finite one, is a corrupt value and is not the same thing.
-            demand[~np.isfinite(demand)] = 0.0
+            missing = ~np.isfinite(demand)
+        else:
+            missing = np.zeros(demand.shape, dtype=bool)
+        demand = np.where(missing, 0.0, demand)
         nonfinite = int((~np.isfinite(demand)).sum())
         if nonfinite:
             raise ValueError('%s carries %d non-finite demand cell(s); treating them as zero would '
@@ -2209,6 +2213,13 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
         stock = np.bincount(flat.ravel(), weights=np.where(before == idx, ha, 0.0).ravel(), minlength=n)
         ended = np.bincount(flat.ravel(), weights=np.where(after == idx, ha, 0.0).ravel(), minlength=n)
         want = demand.ravel()
+        inside = np.flatnonzero(missing.ravel() & ((stock > 0) | (ended > 0)))
+        if inside.size:
+            raise ValueError('%s marks %d cell(s) as nodata that hold allocatable land; a missing '
+                             'demand is not no demand, and reading it as zero would report those '
+                             'cells as satisfied. First: %s'
+                             % (path, inside.size,
+                                [(int(c // shape[1]), int(c % shape[1])) for c in inside[:5]]))
         # A cell is reported when anything was demanded, anything was there to take, or anything
         # ENDED there. The last is the case a demand-and-stock test misses: the output gaining a
         # class that was never demanded and never present is precisely what this should surface.

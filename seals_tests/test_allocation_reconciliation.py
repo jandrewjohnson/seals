@@ -73,12 +73,13 @@ def test_mismatched_grids_raise(grids, tmp_path):
                                          grids['ha'], CLASSES)
 
 
-def test_nodata_in_the_demand_is_not_read_as_a_target(grids):
-    path = _write(grids['tmp'] / 'nd_demand.tif', np.array([[-9999.0]]), grids['coarse'], nodata=-9999.0)
-    out = seals_utils.reconcile_allocation({'othernat': path}, grids['before'], grids['after'],
-                                           grids['ha'], CLASSES)
-    assert out.set_index('class_label').loc['othernat', 'demanded_ha'] == 0.0
-    assert not out.set_index('class_label').loc['othernat', 'infeasible']
+def test_a_FINITE_NODATA_demand_over_allocatable_land_FAILS(grids):
+    """The -9999 flavour of the same rule: the cell holds othernat, so its demand is missing."""
+    path = _write(grids['tmp'] / 'nd_demand.tif', np.array([[-9999.0]]), grids['coarse'],
+                  nodata=-9999.0)
+    with pytest.raises(ValueError, match='hold allocatable land'):
+        seals_utils.reconcile_allocation({'othernat': path}, grids['before'], grids['after'],
+                                         grids['ha'], CLASSES)
 
 
 # ---------------------------------------------------------------------------
@@ -94,13 +95,27 @@ def test_a_NONFINITE_demand_cell_FAILS_instead_of_counting_as_zero(grids):
                                          grids['ha'], CLASSES)
 
 
-def test_a_NONFINITE_cell_DECLARED_as_nodata_is_accepted_as_no_demand(grids):
-    """A raster that declares a non-finite nodata is saying those cells are unmeasured."""
+def test_NODATA_OVER_ALLOCATABLE_LAND_FAILS(grids):
+    """A missing demand is not no demand: the cell holds land, so zero would call it satisfied."""
     path = _write(grids['tmp'] / 'nan_ndv.tif', np.array([[np.nan]], dtype=np.float64),
                   grids['coarse'], nodata=np.nan)
-    out = seals_utils.reconcile_allocation({'grassland': path}, grids['before'], grids['after'],
-                                           grids['ha'], CLASSES)
-    assert (out.demanded_ha == 0).all()
+    with pytest.raises(ValueError, match='hold allocatable land'):
+        seals_utils.reconcile_allocation({'grassland': path}, grids['before'], grids['after'],
+                                         grids['ha'], CLASSES)
+
+
+def test_NODATA_OUTSIDE_THE_FOOTPRINT_is_accepted(tmp_path):
+    """Nodata is only acceptable where there is no allocatable land and nothing ended."""
+    fine = from_origin(0, 4, 1, 1)
+    coarse = from_origin(0, 4, 4, 4)
+    empty = np.zeros((4, 4), dtype=np.int32)          # no class present anywhere
+    before = _write(tmp_path / 'b.tif', empty, fine)
+    after = _write(tmp_path / 'a.tif', empty, fine)
+    ha = _write(tmp_path / 'h.tif', np.ones((4, 4), dtype=np.float64), fine)
+    path = _write(tmp_path / 'nan_outside.tif', np.array([[np.nan]], dtype=np.float64),
+                  coarse, nodata=np.nan)
+    out = seals_utils.reconcile_allocation({'grassland': path}, before, after, ha, CLASSES)
+    assert out.empty or (out.demanded_ha == 0).all()
 
 
 def test_a_DEMAND_RASTER_THAT_DOES_NOT_COVER_THE_FINE_GRID_FAILS(grids):
