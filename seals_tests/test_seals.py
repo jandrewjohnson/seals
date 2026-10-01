@@ -23,8 +23,11 @@ def test_run_seals_wrapped():
         project_dir=os.path.join(os.path.expanduser('~'), 'Files', 'seals', 'projects', 'seals_test'),
         run_mode='check')
     # Template seeding copies from the run file's dir (input_template/ beside
-    # run_seals.py), not from this test's dir.
+    # run_seals.py), not from this test's dir. ProjectFlow derives input_template_dir
+    # from script_dir when it is constructed, so set both: without the second line the
+    # test passes only while input/ still holds the CSVs from an earlier run.
     p.script_dir = os.path.dirname(os.path.abspath(seals.run_seals.__file__))
+    p.input_template_dir = os.path.join(p.script_dir, 'input_template')
     p.scenario_definitions_filename = 'standard_scenarios_test.csv'
 
     seals.run_seals.run_project(p)

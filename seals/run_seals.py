@@ -39,7 +39,9 @@ def run_project(p):
 
 if __name__ == '__main__':
     
-    p = hb.ProjectFlow(project_name='seals', run_mode='check')
+    # run_mode: 'full' (default) timestamps a new project dir | 'check' resumes in place |
+    # 'fresh_intermediate' rebuilds all computation but keeps input/ (test projects only).
+    p = hb.ProjectFlow(project_name='seals', run_mode='full')
     p.scenario_definitions_filename = 'standard_scenarios.csv'
 
     run_project(p)
