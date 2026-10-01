@@ -59,7 +59,7 @@ def run_project(p):
 if __name__ == '__main__':
     # run_mode: 'check' resumes in place | 'fresh_intermediate' rebuilds all
     # computation but keeps input/ (test projects only) | 'full' timestamps a new dir.
-    p = hb.ProjectFlow(project_name='seals_standard', run_mode='check')
+    p = hb.ProjectFlow(project_name='seals_standard', run_mode='full')
     p.scenario_definitions_filename = 'standard_scenarios.csv'
     # p.tasks_to_skip = ['stitched_lulc_simplified_scenarios']
 
