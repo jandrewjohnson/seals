@@ -1,14 +1,14 @@
-# scenarios.csv Format (v1)
+# Custom Scenarios
 
 The scenarios CSV defines your SEALS scenarios. Each row is one scenario. The
 tracked copies that ship with SEALS are
-[`seals/input_template/standard_scenarios.csv`](../seals/input_template/standard_scenarios.csv)
+[`seals/input_template/standard_scenarios.csv`](https://github.com/jandrewjohnson/seals/blob/main/seals/input_template/standard_scenarios.csv)
 (three scenarios) and `standard_scenarios_test.csv` (a pared two-row version);
 this page documents their columns.
 
 > **This is the v1 schema — the one the code reads today.** A **v2 schema** is
 > specified in
-> [scenario_definitions.qmd](https://justinandrewjohnson.com/earth_economy_devstack/scenario_definitions.html)
+> [proposed_changes.qmd](https://justinandrewjohnson.com/earth_economy_devstack/proposed_changes.html)
 > and no code implements it yet. v2 fixes several structural problems in v1: it
 > replaces `baseline_reference_label` / `comparison_counterfactual_labels` /
 > per-model time columns with a `observed_reference_label` / `compared_to` /
@@ -86,8 +86,9 @@ ssp2_rcp45_luh2-message_bau_shift,policy,RWA,ssp2,rcp45,luh2-message,bau_shift,2
 ## Where the file lives
 
 Put your scenarios CSV in an **`input_template/`** directory beside your run
-file. It is tracked in git; ProjectFlow copies anything missing into the
-project's untracked `input/` on first run and never overwrites the working copy.
+file. It is tracked in git and ProjectFlow reads it there in place; a copy you
+put in the project's untracked `input/` shadows it, and a run warns if the
+template later changes underneath that copy.
 Name it in your run file's `__main__` block:
 
 ```python

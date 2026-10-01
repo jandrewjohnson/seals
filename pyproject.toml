@@ -2,7 +2,9 @@
 name = "sealsmodel"
 description = "Land-use change model and downscaler"
 readme = "README.md"
-requires-python = ">=3.6"
+# Floor set by hazelbean, which requires >=3.10 (NumPy 2 dropped 3.9). Declaring
+# anything lower here lets pip resolve an install that cannot import.
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 maintainers = [
         {name = "Justin Andrew Johnson"}
@@ -14,16 +16,18 @@ classifiers = [
         "Programming Language :: Cython",
         "Programming Language :: Python :: 3",
 ]
-# hazelbean>=2.0.0 is a hard floor, not a preference: run files call
+# hazelbean>=2.1.0 is a hard floor, not a preference: run files call
 # p.skip_tasks(p.tasks_to_skip) unguarded, and ProjectFlow only initializes that
-# attribute from 2.0.0 on. Any earlier hazelbean raises AttributeError on every
-# run. The rest of the stack (numpy, pandas, GDAL, ...) comes from conda in the
+# attribute from 2.0.0 on; and base_data regenerated under the POG specification
+# holds rasters that declare no nodata (ha_per_cell among them), which hazelbean
+# before 2.1.0 cannot clip or chunk (save_array_as_geotiff raises NameError).
+# The rest of the stack (numpy, pandas, GDAL, ...) comes from conda in the
 # documented install, so it is deliberately not pinned here.
-dependencies = ["hazelbean>=2.0.0"]
+dependencies = ["hazelbean>=2.1.0"]
 dynamic = ["version"]
 
 [project.urls]
-repository = "https://github.com/jandrewjohnson/seals_dev"
+repository = "https://github.com/jandrewjohnson/seals"
 
 [build-system]
 requires = [
@@ -44,3 +48,9 @@ local_scheme = "node-and-date"
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["seals_tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["seals_tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

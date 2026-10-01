@@ -223,7 +223,7 @@ def combined_trained_coefficients(p):
 
     calibration_dir = os.path.join(extraction_dir, 'intermediate', 'calibration')
 
-    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + ' .csv')
+    p.combined_calibration_file_path = os.path.join(p.cur_dir, 'trained_coefficients_' + current_project_name + '.csv')
 
     if p.run_this:
 
@@ -250,7 +250,28 @@ def combined_trained_coefficients(p):
             df = pd.concat(list_of_dfs, axis=0, ignore_index=True)
 
             hb.log('extract_calibration_from_project() found ' + str(len(extant_block_calibration_paths)) + ' calibration files.')
-            df.to_excel(p.combined_calibration_file_path)
+
+            # Calibration cannot produce the constraints. It fits coefficients for the classes
+            # that change and never learns that a class must be excluded, so the constraint
+            # rows come out of it neutral and are imposed here, as the last step.
+            #
+            # The non-changing classes are derived: no coarse demand means expansion onto one
+            # would shrink it with nothing authorising the loss. A project adds anything
+            # further through additional_protected_class_labels, which is a scenario statement
+            # rather than something derivable. Urban is the standing example, since it has a
+            # budget and expands, but built land is not un-built.
+            #
+            # Writing one file loses nothing: these zeros carry no fitted information, so the
+            # neutral form is recovered by setting the constraint rows back to 1.0.
+            additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
+            protected = seals_utils.protected_class_labels(
+                p.all_class_labels, p.changing_class_labels, additional_protected)
+            if protected:
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, p.changing_class_labels, additional_protected)
+                hb.log('Imposed presence constraints on: ' + ', '.join(protected))
+
+            df.to_csv(p.combined_calibration_file_path)
 
 
 
@@ -961,6 +982,28 @@ def calibration_zones(passed_p=None):
 
         # For now, i chose to just start with the gtap values so that i don't have to create a newly build right-size spreadsheet
         spatial_regressor_starting_coefficients_read = pd.read_csv(starting_coefficients_path, index_col=0)
+
+        # brazil_net_zero WARM-START (guarded): if p.warm_start_coefficients_path is set, seed this tile's
+        # starting coefficients from its per-tile global coeffs (matched by calibration_block_index and
+        # spatial_regressor_name) instead of the default structured prior. Default (attr unset/None) leaves
+        # behavior byte-identical to stock SEALS.
+        _ws_path = getattr(p, 'warm_start_coefficients_path', None)
+        if _ws_path and hb.path_exists(_ws_path):
+            _ws_tile = os.path.basename(os.path.dirname(p.cur_dir))
+            _ws_blk = _ws_tile + '_' + str(int(p.processing_resolution)) + '_' + str(int(p.processing_resolution))
+            _ws_df = pd.read_csv(_ws_path)
+            _ws_df = _ws_df[_ws_df['calibration_block_index'].astype(str) == _ws_blk].drop_duplicates('spatial_regressor_name')
+            if len(_ws_df):
+                _ws_df = _ws_df.set_index('spatial_regressor_name')
+                _ws_cls = [c for c in spatial_regressor_starting_coefficients_read.columns if str(c).startswith('class_')]
+                for _ws_rn in spatial_regressor_starting_coefficients_read.index:
+                    if _ws_rn in _ws_df.index:
+                        for _ws_c in _ws_cls:
+                            if _ws_c in _ws_df.columns:
+                                spatial_regressor_starting_coefficients_read.loc[_ws_rn, _ws_c] = _ws_df.loc[_ws_rn, _ws_c]
+                hb.log('WARM-START: seeded tile ' + _ws_tile + ' from global coeffs (block ' + _ws_blk + ')')
+            else:
+                hb.log('WARM-START: no global coeffs for block ' + _ws_blk + '; using default prior')
         # spatial_regressor_starting_coefficients_read = pd.read_csv(os.path.join(p.input_dir, 'spatial_regressor_starting_coefficients.csv'), index_col=0)
         # NZ_brazil fix: pad to len(p.class_labels) rows so the array aligns with the
         # (n_all x n_all) coarse_change_matrix at line 1011 and the Cython kernel's
@@ -969,7 +1012,10 @@ def calibration_zones(passed_p=None):
         # (water, other) at their positions within p.all_class_indices. Default
         # ESA+LUH2 has the same 7-vs-5 split; this latent mismatch only fires on
         # fresh calibration since most users run allocation with bundled coefficients.
-        csv_coefs = spatial_regressor_starting_coefficients_read[p.seals_class_names].values.astype(np.float64).T  # shape (n_changing, n_regressors)
+        # pd.to_numeric rather than a bare astype: numpy accepts PEP 515 underscore separators,
+        # so a mis-selected column would convert silently ('106_84_1_1' -> 1068411.0) and the
+        # fitted coefficients would carry it. See the same guard in allocation().
+        csv_coefs = spatial_regressor_starting_coefficients_read[p.seals_class_names].apply(pd.to_numeric).values.astype(np.float64).T  # shape (n_changing, n_regressors)
         spatial_regressor_starting_coefficients = np.zeros((len(p.class_labels), csv_coefs.shape[1]), dtype=np.float64)
         all_idx_list = list(p.all_class_indices)
         for i, changing_idx in enumerate(p.changing_class_indices):
@@ -1889,6 +1935,45 @@ def allocation_zones(p):
             hb.log('Starting to read ' + calibration_parameters_path)
             df = pd.read_csv(calibration_parameters_path)
 
+            # Fail here rather than allocating with coefficients fitted for other classes.
+            # Class ids shift between schemes, so the wrong file misassigns classes silently
+            # and still produces a map.
+            scheme_labels = getattr(p, 'changing_class_labels', None)
+            if scheme_labels:
+                seals_utils.check_coefficients_match_class_scheme(
+                    df, scheme_labels, coefficients_path=calibration_parameters_path)
+            else:
+                hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
+
+            # Rebuild the constraint block for THIS run, discarding what the file carried. We
+            # train unconstrained and allocate constrained, so the block belongs to the scenario
+            # rather than to the calibration that produced the file. water/other/othernat need no
+            # declaration -- they are derived, having no coarse budget in this configuration.
+            if scheme_labels:
+                additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
+                df = seals_utils.apply_presence_constraints(
+                    df, p.all_class_labels, scheme_labels, additional_protected)
+                hb.log('Rebuilt presence constraints; protected: ' + ', '.join(
+                    seals_utils.protected_class_labels(
+                        p.all_class_labels, scheme_labels, additional_protected)))
+
+            # Point the presence constraints at this run's own layer for the year it allocates
+            # from, rather than trusting the path baked in when the coefficients were produced.
+            # That path names the calibration's project and the year it was trained to, so a
+            # file used anywhere else points at a directory that need not exist and a year that
+            # need not be the base year. A layer from after the base year also encodes land
+            # cover the run should not see.
+            # Re-root the per-project regressor layers before anything reads them. A
+            # coefficient file fitted elsewhere names that project's directories, which need
+            # not exist here; every project generates its own copies under the same relative
+            # path. Shared covariates in base_data are untouched.
+            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year,
+                                                 p.base_data_dir)
+
+            df = seals_utils.resolve_constraint_layers(
+                df, p.fine_processed_inputs_dir, p.lulc_src_label,
+                p.lulc_simplification_label, p.key_base_year)
+
             # TODO This is bad. Fix it.
             # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
             # TODOOO AGAIN. Indeed, still bad.
@@ -2329,9 +2414,36 @@ def allocation(passed_p=None):
                     else:
                         projected_coarse_change_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, p.coarse_blocks_list).astype(np.float64)
 
-            # Note questionable choice here that the actual calibration parameters must be the last n-classes of columns
-            p.seals_class_names = spatial_regressors_df.columns.values[-len(changing_class_indices_array):]
-            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].values.astype(np.float64).T
+            # Select the per-class coefficient columns by NAME. Taking the last n columns
+            # positionally breaks whenever the table carries a trailing column after them: a
+            # combined trained-coefficients file ends with calibration_block_index, so the
+            # matrix shifted by one class and the last class received the block index, which
+            # float() parses via underscore separators ('129_88_1_1' -> 1298811.0) instead of
+            # raising. Tables name these columns either '<label>' or 'class_<label>', so match
+            # either convention and keep the positional form only as a fallback.
+            _cols = list(spatial_regressors_df.columns)
+            _plain = [str(l) for l in p.changing_class_labels]
+            _pref = ['class_' + str(l) for l in p.changing_class_labels]
+            if all(c in _cols for c in _pref):
+                p.seals_class_names = np.asarray(_pref)
+            elif all(c in _cols for c in _plain):
+                p.seals_class_names = np.asarray(_plain)
+            else:
+                # Neither naming convention matched, e.g. labels held as integer codes. The
+                # positional form is only safe when the class columns are last, so say so
+                # loudly rather than allocating on a silently shifted matrix.
+                p.seals_class_names = spatial_regressors_df.columns.values[-len(changing_class_indices_array):]
+                hb.log('WARNING: could not match per-class coefficient columns by name for labels '
+                       + str(list(p.changing_class_labels)) + '; falling back to the last '
+                       + str(len(changing_class_indices_array)) + ' columns ' + str(list(p.seals_class_names))
+                       + '. Verify these are the per-class columns: a trailing column such as '
+                       + 'calibration_block_index shifts every class by one and does NOT raise, '
+                       + "because float() parses '0_18_1_1' as 1811.0.")
+            # astype(np.float64) is not a guard here: numpy accepts PEP 515 underscore
+            # separators, so a mis-selected column of block keys converts silently
+            # ('106_84_1_1' -> 1068411.0) and the run completes on values that look like
+            # coefficients. pd.to_numeric raises, so a wrong column selection fails at load.
+            spatial_regressor_trained_coefficients = spatial_regressors_df[p.seals_class_names].apply(pd.to_numeric).values.astype(np.float64).T
             generation_best_parameters = np.copy(spatial_regressor_trained_coefficients)
 
             p.call_string = ''
@@ -2583,8 +2695,24 @@ def stitched_lulc_simplified_scenarios(p):
                                 #     hb.clip_raster_by_bb(p.lulc_simplified_paths[p.key_base_year], p.bb_of_tiles, p.local_output_base_map_path)
                     else:
                         hb.log('Skipping stitching ' + p.lulc_projected_stitched_path + ' because it already exists.')
-                    
-                    
+
+                    # Assert here, at the task that produces the artefact, rather than in a
+                    # downstream consumer: the map must not leave this function in a state no
+                    # one checked. See seals_utils.assert_non_changing_classes_unchanged.
+                    # Compare against the SIMPLIFIED base map. p.base_year_lulc_path is the RAW
+                    # source LULC, whose codes mean different classes, so comparing the two
+                    # reports millions of impossible conversions. Caught by a live run 2026-08-15.
+                    simplified_base = (getattr(p, 'lulc_simplified_paths', None) or {}).get(p.key_base_year)
+                    if hb.path_exists(p.lulc_projected_stitched_path) and simplified_base:
+                        seals_utils.assert_non_changing_classes_unchanged(
+                            p.lulc_projected_stitched_path,
+                            simplified_base,
+                            p.all_class_labels,
+                            p.all_class_indices,
+                            p.changing_class_labels,
+                            seals_utils.resolve_additional_protected_class_labels(p),
+                        )
+
                     # POSSIBLE STARTING POINT: I have no idea why, but the areas in the NORTH outside of the aereg but inside the bb have change, but the areas IN the aezreg don't have change.
                     if p.clip_to_aoi and p.aoi != 'global' and hb.path_exists(p.aoi_path):
                         hb.timer('start clip')
