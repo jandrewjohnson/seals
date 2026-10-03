@@ -256,6 +256,10 @@ def build_standard_task_tree(p):
     
 def build_ken_task_tree(p):
     """
+    DEPRECATED: kept for reference only; nothing in the stack calls it. Its ecosystem-service tasks (InVEST carbon and
+    pollination, the pollination shock, the biodiversity index, multi-vector summaries) came from an ecosystem_services
+    module that no longer exists, so they were removed (2026-10-02); the tree that remains is the standard seals pipeline.
+
     Key Modifications:
     REMOVED 1) Use alternative basemap for coarse change calculations (coarse_simplified_ha_difference_from_previous_year_with_alt_basemap)
     2) Add tasks to generate pollination shock
@@ -294,13 +298,6 @@ def build_ken_task_tree(p):
     p.visualization_task = p.add_task(seals_visualization_tasks.visualization)
     p.lulc_pngs_task = p.add_task(seals_visualization_tasks.lulc_pngs, parent=p.visualization_task)
     
-    ##### CALCULATE ECOSYSTEM SERVICES #####
-    p.reproject_lulc_rasters_to_equal_area = p.add_task(ecosystem_services.reproject_lulc_rasters_to_equal_area)
-    p.invest_carbon = p.add_task(ecosystem_services.run_invest_carbon)
-    p.invest_pollination = p.add_task(ecosystem_services.run_invest_pollination)
-    p.pollination_shock = p.add_task(ecosystem_services.calculate_crop_value_and_shock)
-    p.biodiversity = p.add_task(ecosystem_services.calculate_biodiversity_index)
-    p.summarize_and_visualize_multi_vector = p.add_task(ecosystem_services.summarize_and_visualize_multi_vector) 
 
 
 def build_standard_with_postprocessing_task_tree(p):
