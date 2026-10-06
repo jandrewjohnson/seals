@@ -183,60 +183,6 @@ def plot_array_as_seals7_lulc(input_array, output_path, title, indices_to_labels
     plt.close()
 
 
-# Helper
-def show_class_expansions_vs_change_OLD(baseline_lulc_array, projected_lulc_array, class_id, change_array, output_path, **kwargs):
-    raise NameError('Deprecated for improved version in seals_utils.')
-
-    for ax in fig.get_axes():
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-
-    lulc_cmap = hb.generate_custom_colorbar(projected_lulc_array, color_scheme='spectral_bold_white_left', transparent_at_cbar_step=0)
-    current_class_expansions = np.where((projected_lulc_array == class_id) & (baseline_lulc_array != class_id), 1, 0)
-    current_class_contractions = np.where((projected_lulc_array != class_id) & (baseline_lulc_array == class_id), 2, 0)
-    combined = current_class_expansions + current_class_contractions
-
-    multiplication_factor = int(projected_lulc_array.shape[0] / change_array.shape[0])
-    change_array_r = hb.naive_upsample(change_array.astype(np.float64), multiplication_factor)
-
-    # Make symmetric vmin-vmax to ensure zero in center
-    vmin = np.min(change_array_r)
-    vmax = np.max(change_array_r)
-    if abs(vmin) > vmax:
-        vmax = -vmin
-    else:
-        vmin = -vmax
-
-    im1 = ax.imshow(change_array_r, vmin=vmin, vmax=vmax, cmap='BrBG')
-    im2 = ax.imshow(combined, cmap=lulc_cmap)
-
-    bounds = np.linspace(1, 3, 3)
-    bounds = [i - .5 for i in bounds]
-    # norm = matplotlib.colors.BoundaryNorm(bounds, lulc_cmap.N)
-
-    ticks = np.linspace(1, 2, 2)
-    cbar0 = plt.colorbar(im2, ax=ax, orientation='vertical', aspect=20, shrink=0.5, cmap=lulc_cmap, ticks=ticks, boundaries=bounds) # , format='%1i', spacing='proportional', norm=norm,
-
-    tick_labels = [
-        'Expansion',
-        'Contraction',
-    ]
-    cbar0.set_ticklabels(tick_labels)
-    cbar0.ax.tick_params(labelsize=6)
-
-    if kwargs.get('title'):
-        ax.set_title(kwargs['title'])
-        ax.title.set_fontsize(10)
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=600, )
-    plt.close()
-
 def show_class_expansions_vs_change_underneath(lulc_baseline_array, projected_lulc_array, class_id, change_array, output_path, **kwargs):
     """Change array is the COARSE net change of class_id"""
 

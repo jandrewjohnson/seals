@@ -671,10 +671,7 @@ def process_global_gpkg(p):
 def calc_observed_lulc_change(passed_p=None):
     ### DEPRECETAED BECAUSE PATHS LOGIC not uptaded
     # MOVING LOGIC TO UTILS, then remove.
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
 
     # p.current_region_id = p.region_ids

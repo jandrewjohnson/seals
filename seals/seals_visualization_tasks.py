@@ -22,10 +22,7 @@ def visualization(p):
     pass
 
 def coarse_change_with_class_change_underneath(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     if p.run_this:
 
@@ -153,10 +150,7 @@ def coarse_change_with_class_change_underneath(passed_p=None):
 def coarse_change_with_class_change(passed_p=None):
     # For each class, plot the coarse and fine data
 
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     if p.run_this:
 
@@ -267,10 +261,7 @@ def coarse_change_with_class_change(passed_p=None):
                                                                     title='Class ' + class_label + ' projected expansion and contraction on coarse change')
 
 def target_zones_matrices_pngs(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     # TODOOO: Document how i separates the chnage matrices and change matrices pngs into content/visualization. Then
     # add a a simple LULC plot. This might involve pulling in geoecon code.
@@ -442,10 +433,7 @@ def target_zones_matrices_pngs(passed_p=None):
                                                 num_cbar_ticks=2, vmin=0, vmid=vmax / 10.0, vmax=vmax, color_scheme='ylgnbu')
 
 def full_change_matrices_pngs(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     # TODOOO: Document how i separates the chnage matrices and change matrices pngs into content/visualization. Then
     # add a a simple LULC plot. This might involve pulling in geoecon code.
@@ -684,10 +672,7 @@ def lulc_pngs(p):
 
 
 def coarse_fine_with_report(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     if p.run_this:
 

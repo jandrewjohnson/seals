@@ -82,10 +82,7 @@ def initialize_tasks(p):
 
 
 def full_change_matrices(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     if p.run_this:
 
@@ -575,10 +572,7 @@ def calibration(p):
         p.iterator_replacements['current_policy_scenario_label'] = [p.iterator_replacements['current_policy_scenario_label'][0]]
 
 def calibration_prepare_lulc(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     p.zone_esa_simplified_lulc_base_year_path = os.path.join(p.cur_dir, 'zone_esa_'+p.lulc_simplification_label + '_lulc_' + str(p.key_base_year) + '.tif')
 
@@ -765,10 +759,7 @@ def calibration_zones_logit(passed_p=None):
     NOTE = "ABANDONED RIGHT AFTER I GOT THE LOGIT TO RUN."
 
 
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     final_coefficients_path = os.path.join(p.cur_dir, 'trained_coefficients_zone_' + os.path.split(os.path.split(p.cur_dir)[0])[1] + '.csv')
 
@@ -945,10 +936,7 @@ def calibration_zones_logit(passed_p=None):
 
 
 def calibration_zones(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     final_coefficients_path = os.path.join(p.cur_dir, 'trained_coefficients_zone_' + os.path.split(os.path.split(p.cur_dir)[0])[1] + '.csv')
 
@@ -1442,10 +1430,7 @@ def calibration_zones(passed_p=None):
         # p.generation_best_parameters = pd.read_csv(final_coefficients_path)
         # output_df_2.to_csv(final_coefficients_path, index=False)
 def calibration_plots(passed_p=None):
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     if p.run_this:
 
@@ -2030,10 +2015,7 @@ def allocation_zones(p):
 def allocation(passed_p=None):
     # Actually do the allocation
 
-    if passed_p is None:
-        global p
-    else:
-        p = passed_p
+    p = passed_p
 
     start = time.time()
     if p.run_this:

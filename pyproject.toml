@@ -16,12 +16,14 @@ classifiers = [
         "Programming Language :: Cython",
         "Programming Language :: Python :: 3",
 ]
-# hazelbean>=2.0.0 is a hard floor, not a preference: run files call
+# hazelbean>=2.1.0 is a hard floor, not a preference: run files call
 # p.skip_tasks(p.tasks_to_skip) unguarded, and ProjectFlow only initializes that
-# attribute from 2.0.0 on. Any earlier hazelbean raises AttributeError on every
-# run. The rest of the stack (numpy, pandas, GDAL, ...) comes from conda in the
+# attribute from 2.0.0 on; and base_data regenerated under the POG specification
+# holds rasters that declare no nodata (ha_per_cell among them), which hazelbean
+# before 2.1.0 cannot clip or chunk (save_array_as_geotiff raises NameError).
+# The rest of the stack (numpy, pandas, GDAL, ...) comes from conda in the
 # documented install, so it is deliberately not pinned here.
-dependencies = ["hazelbean>=2.0.0"]
+dependencies = ["hazelbean>=2.1.0"]
 dynamic = ["version"]
 
 [project.urls]
