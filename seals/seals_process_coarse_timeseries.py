@@ -39,6 +39,11 @@ def regional_change(p):
             if getattr(p, 'seals_years', None) is not None:
                 p.years = p.seals_years
 
+            # The first demand interval runs from the FINE base year, which is the year of the
+            # starting LULC map and of the interpolated coarse state the difference task writes.
+            # The override below replaces p.key_base_year with the coarse source's own base year,
+            # which names no difference raster the coarse chain produces.
+            fine_base_year = int(str(row['key_base_year']).split(' ')[0])
             if getattr(p, 'seals_key_base_year', None):
                 p.key_base_year = p.seals_key_base_year[0]
 
@@ -66,7 +71,7 @@ def regional_change(p):
                         if c > 0:                                  
                             previous_year = p.years[c - 1]                                
                         else:
-                            previous_year = p.key_base_year
+                            previous_year = fine_base_year
                             
                         # Tricky case here, because there was catears in the refpath, it never found it and thus assumed it was an input to be created
                         # This means the path has the extra cur_dir derived paths. Hack here to find the refpath and merge it with intermediate
@@ -291,7 +296,7 @@ def regional_change(p):
                         if c > 0:
                             previous_year = p.years[c - 1]
                         else:
-                            previous_year = p.key_base_year
+                            previous_year = fine_base_year
                         output_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                         for column in p.changing_class_labels:
                             current_luc_coarse_projections_input_dir = os.path.join(p.coarse_simplified_ha_difference_from_previous_year_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year)) 
@@ -1166,7 +1171,13 @@ def coarse_simplified_ha(p):
 
 
             else:
-                for year in key_base_years_as_list(p.key_base_year) + p.years:
+                # The fine base year as well as the coarse one: the interpolated state exists at the
+                # fine base year and the differences are formed from it, so leaving it out here left
+                # the hectare intermediates describing a different first step than the run used.
+                fine_base_year = int(str(row['key_base_year']).split(' ')[0])
+                ha_years = sorted(set(key_base_years_as_list(p.key_base_year)
+                                      + [fine_base_year] + list(p.years)))
+                for year in ha_years:
 
                     src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
@@ -1343,10 +1354,37 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                             # Prefer seals_key_base_year for the spatial baseline lookup
                             # (e.g., MAgPIE 2020) when the GTAP key_base_year (e.g., 2023)
                             # doesn't exist in the coarse data.
+                            # The FINE base year is where the observed land cover sits, so it is
+                            # what the first difference must start from. seals_key_base_year names
+                            # the coarse model's own step and was used unconditionally, which made
+                            # the first step span 2020->2030 where 2023->2030 belongs -- a ten-year
+                            # anomaly over a seven-year interval. Now the fine base year is used
+                            # whenever its interpolated state exists, and its absence is raised
+                            # rather than absorbed: falling back silently is what hid this.
+                            fine_base_year = int(str(row['key_base_year']).split(' ')[0])
+                            coarse_base_year = None
                             if 'seals_key_base_year' in row.index and not pd.isna(row['seals_key_base_year']):
-                                base_year = int(str(row['seals_key_base_year']).split(' ')[0])
-                            else:
-                                base_year = int(row['key_base_year'])
+                                coarse_base_year = int(str(row['seals_key_base_year']).split(' ')[0])
+                            base_year = fine_base_year
+                            if coarse_base_year is not None and coarse_base_year != fine_base_year:
+                                probe_dir = os.path.join(p.coarse_simplified_proportion_dir,
+                                                         baseline_exogenous_label, baseline_reference_model,
+                                                         str(fine_base_year))
+                                probe = os.path.join(probe_dir, str(dst_class_label) + '_prop_'
+                                                     + baseline_exogenous_label + '_'
+                                                     + baseline_reference_model + '_'
+                                                     + str(fine_base_year) + '.tif')
+                                if not hb.path_exists(probe):
+                                    raise NameError(
+                                        'the coarse state at the fine base year %d is missing, so the '
+                                        'first difference would span %d->%d instead of %d->%d and '
+                                        'overstate the spatial anomaly by %d/%d. Expected %s. Run '
+                                        'coarse_base_year_interpolated for the baseline reference '
+                                        'tree first; do NOT fall back to %d.'
+                                        % (fine_base_year, coarse_base_year, int(p.years[0]),
+                                           fine_base_year, int(p.years[0]),
+                                           int(p.years[0]) - coarse_base_year,
+                                           int(p.years[0]) - fine_base_year, probe, coarse_base_year))
                             current_starting_year = base_year
                         if previous_year is None:
                             # This points into the baseline tree, which carries no
@@ -1383,6 +1421,29 @@ def coarse_simplified_ha_difference_from_previous_year(p):
 
 
                         current_ending_year_dst_path = os.path.join(current_ending_year_dst_dir, dst_class_label + '_' + str(year) + '_' + str(current_starting_year) + '_ha_diff_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '.tif')
+
+                        # A first step computed against the COARSE base year is a different quantity
+                        # from one computed against the fine base year, and every map, ES table and
+                        # solve downstream was built from it. Existence guards would happily leave it
+                        # in place beside the new one, so a stale sibling stops the task instead.
+                        if year_c == 0 and coarse_base_year is not None and coarse_base_year != fine_base_year:
+                            stale = os.path.join(current_ending_year_dst_dir,
+                                                 dst_class_label + '_' + str(year) + '_' + str(coarse_base_year)
+                                                 + '_ha_diff_' + p.exogenous_label + '_' + p.climate_label + '_'
+                                                 + p.model_label + '_' + p.counterfactual_label + '.tif')
+                            if hb.path_exists(stale):
+                                raise NameError(
+                                    'a first-step difference against the coarse base year %d is still '
+                                    'present (%s). It spans a different interval from the one this run '
+                                    'now forms (%d->%d). Only THIS interval changes -- the %s demand '
+                                    'rasters are unaffected -- but their allocations start from the '
+                                    'repaired %d map, so every stitched map and every ES table at '
+                                    'every anchor year is conditional on it, not just the first. '
+                                    'Remove it and the outputs derived from it before rebuilding; they '
+                                    'cannot be mixed.'
+                                    % (coarse_base_year, stale, fine_base_year, year,
+                                       ' and '.join(str(y) for y in list(p.years)[1:]) or 'later',
+                                       year))
 
                         if not hb.path_exists(current_ending_year_dst_path):
 

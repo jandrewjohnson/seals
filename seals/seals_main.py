@@ -1582,11 +1582,12 @@ def allocations(p):
                     p.iterator_replacements['year'].append(year)
 
                     if c == 0:
-
-                        if hasattr(p, 'seals_key_base_year'):
-                            p.iterator_replacements['previous_year'].append(p.seals_key_base_year[0])
-                        else:
-                            p.iterator_replacements['previous_year'].append(p.key_base_year)
+                        # The first interval runs from the fine base year: it is the year of the
+                        # starting LULC map and of the interpolated coarse state the difference task
+                        # writes. seals_key_base_year is the coarse source's own base year and names
+                        # no difference raster, so anchoring here sent the allocator to a file the
+                        # coarse chain never produced.
+                        p.iterator_replacements['previous_year'].append(p.key_base_year)
 
                     else:
                         # p.iterator_replacements['previous_year'].append(p.years[c-1])
@@ -1982,6 +1983,22 @@ def allocation_zones(p):
             for src, dst in year_replacement_dict.items():
 
                 df['data_location'] = df.loc[:, 'data_location'].replace({str(src): str(dst)}, regex=True)
+
+            # Refuse a coefficient file fitted on a different processing grid than this run is
+            # tiled at. The calibration key is the zone's grid position with nothing recording WHICH
+            # grid, so a mismatch matches as a string for the minority of names present in both
+            # index spaces, silently supplying coefficients from elsewhere, while the rest get an
+            # empty table and allocate nothing at all. Neither failure raises on its own.
+            try:
+                zone_ids = ['%s_%s' % (i[0], i[1]) for i in global_processing_blocks_list]
+            except NameError:
+                zone_ids = []
+            if zone_ids:
+                coverage = seals_utils.assert_calibration_matches_processing_grid(
+                    df, zone_ids, p.processing_resolution, calibration_parameters_path)
+                if coverage is not None:
+                    hb.log('Calibration grid check: %.1f%% of this run\'s zones find a key in %s'
+                           % (100 * coverage, os.path.basename(calibration_parameters_path)))
 
             # TODOOO Consider renaming this.
             p.combined_calibration_parameters_df = df

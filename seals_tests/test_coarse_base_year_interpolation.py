@@ -93,3 +93,30 @@ def test_missing_bracket_file_raises(coarse_tree, tmp_path):
     with pytest.raises(NameError):
         seals_utils.interpolate_coarse_state_at_year(
             source_dir, 2023, (2020, 2025), 'pastureland_prop_{year}.tif')
+
+
+def test_it_can_write_the_state_somewhere_other_than_beside_its_brackets(tmp_path):
+    """The reference trajectory's base-year state belongs in the baseline tree, under the baseline
+    naming, because that is the ONE common start every scenario's first difference reads."""
+    source_dir = str(tmp_path / 'ref')
+    for year, value in ((2020, 10.0), (2030, 20.0)):
+        write_raster(os.path.join(source_dir, str(year), 'cropland_prop_ssp2_rcp70_magpie_ref_%d.tif' % year),
+                     np.full((2, 2), value))
+    baseline_dir = str(tmp_path / 'baseline' / '2023')
+    written = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2030), 'cropland_prop_ssp2_rcp70_magpie_ref_{year}.tif',
+        dst_dir=baseline_dir, dst_filename_template='cropland_prop_ssp2_magpie_{year}.tif')
+    assert written == [os.path.join(baseline_dir, 'cropland_prop_ssp2_magpie_2023.tif')]
+    assert np.allclose(hb.as_array(written[0]), 13.0), 'linear at weight 0.3 between 10 and 20'
+    # and it did NOT write beside the brackets
+    assert not os.path.exists(os.path.join(source_dir, '2023'))
+
+
+def test_the_default_destination_is_unchanged(tmp_path):
+    source_dir = str(tmp_path / 'ref')
+    for year, value in ((2020, 10.0), (2030, 20.0)):
+        write_raster(os.path.join(source_dir, str(year), 'cropland_{year}.tif'.format(year=year)),
+                     np.full((2, 2), value))
+    written = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2030), 'cropland_{year}.tif')
+    assert written == [os.path.join(source_dir, '2023', 'cropland_2023.tif')]
