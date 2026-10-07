@@ -1,4 +1,4 @@
-import logging, os, math, sys
+import logging, os, math, sys, json
 from osgeo import gdal
 import numpy as np
 import scipy
@@ -1570,6 +1570,108 @@ def check_coefficients_match_class_scheme(coefficients_df, changing_class_labels
         % (where, reason, ', '.join(expected) or '(none)', ', '.join(found) or '(none)'))
 
 
+def assert_calibration_matches_processing_grid(coefficients_df, processing_block_ids,
+                                              processing_resolution, coefficients_path,
+                                              minimum_coverage=0.5):
+    """Refuse a coefficient file whose block keys were fitted on a different grid than this run.
+
+    The per-zone calibration key is the zone's own name -- its column and row on the processing grid
+    -- with a constant suffix. Nothing in that string records WHICH grid it counts on, so a file
+    fitted at one processing resolution and used at another still matches as a string, for the
+    minority of names that happen to exist in both index spaces, and silently supplies coefficients
+    belonging to a different part of the world. The zones that match nothing get an empty table, no
+    spatial regressor, and therefore no allocation at all: their land-use demand is dropped without
+    any error.
+
+    That is exactly what happened on this project. Coefficients fitted at 1 degree (columns 0..359)
+    were used by a run tiled at 4 degrees (columns 0..89): 56% of changing zones allocated nothing,
+    and the 44% that matched drew coefficients from elsewhere -- a zone over Honduras took its
+    parameters from a block on the Alaskan North Slope. Every map was affected and nothing failed.
+
+    Two tests, and NEITHER proves the geography is right. Be precise about what each one shows.
+
+    The first detects an incompatible index EXTENT: a calibration key whose column or row lies
+    outside the run's own grid could not have been produced on that grid, so the file is fitted on a
+    finer one. This catches the 1-degree-file-at-4-degrees case, which coverage alone misses badly --
+    such a file still supplies keys for 87% of the 4-degree zones, because columns 0..89 are a subset
+    of columns 0..359, and those keys match as strings while pointing somewhere else entirely.
+
+    **The absence of out-of-range keys does NOT establish that the grids agree.** A file on a coarser
+    grid, or on one anchored differently with the same extent, produces no out-of-range key and would
+    pass. This test is a cheap necessary condition checked at load time, not a proof.
+
+    The second catches the coarse or regional case, where too few of this run's zones find any key.
+
+    Geographic correctness is established SEPARATELY, per zone, by comparing each tile's own bounds
+    against the bounds its key implies on the calibration grid -- see the `--audit-all-lookups` pass
+    in the reconciliation tooling, whose `same_location` result is the actual evidence. Keep the two
+    apart: this guard stops an obviously incompatible file before a run burns hours; the audit is
+    what shows the coefficients belonged to the places that used them.
+
+    Args:
+        coefficients_df (pd.DataFrame): the loaded coefficients; a table with no
+            calibration_block_index column addresses every zone and is not checked.
+        processing_block_ids (iterable): the zone names this run will use, as '<column>_<row>'.
+        processing_resolution (float): degrees per processing block, for the message.
+        coefficients_path (str): named in the message, because the remedy is a different file or a
+            different resolution and the reader needs to know which file was read.
+        minimum_coverage (float): the share of this run's zones that must find a key.
+
+    Raises:
+        NameError: naming the coverage, the implied grids and the two ways out.
+    """
+    import numpy as np
+
+    if 'calibration_block_index' not in getattr(coefficients_df, 'columns', []):
+        return None
+    keys = {str(i) for i in coefficients_df['calibration_block_index'].dropna().unique()}
+    zone_ids = [str(i) for i in processing_block_ids]
+    if not keys or not zone_ids:
+        return None
+    wanted = {z + '_1_1' for z in zone_ids}
+    matched = wanted & keys
+    coverage = len(matched) / len(wanted)
+
+    columns = [int(k.split('_')[0]) for k in keys]
+    rows = [int(k.split('_')[1]) for k in keys]
+    implied = 360.0 / (max(columns) + 1)
+    run_max_column = int(360 / processing_resolution) - 1
+    run_max_row = int(180 / processing_resolution) - 1
+    outside = [k for k, c, r in zip(sorted(keys), columns, rows)
+               if c > run_max_column or r > run_max_row]
+    if outside:
+        raise NameError(
+            'The trained coefficients were fitted on a FINER processing grid than this run.\n'
+            '  coefficients: %s\n'
+            '  %d of %d keys lie outside this run\'s grid, e.g. %s\n'
+            '  their columns reach %d, implying about %g degrees per block\n'
+            '  this run is tiled at %g degrees, so no zone index can exceed %d_%d\n'
+            '  %.1f%% of zones still find a key BY COINCIDENCE of naming, and those keys belong to\n'
+            '  a different part of the world -- a key is a grid position with no grid attached.\n'
+            'Either set p.processing_resolution to %g to match the calibration, or point\n'
+            'calibration_parameters_source at a file fitted for %g degrees.'
+            % (coefficients_path, len(outside), len(keys), outside[:3], max(columns), implied,
+               processing_resolution, run_max_column, run_max_row, 100 * coverage, implied,
+               processing_resolution))
+
+    if coverage >= minimum_coverage:
+        return coverage
+
+    raise NameError(
+        'The trained coefficients were fitted on a different processing grid than this run.\n'
+        '  coefficients: %s\n'
+        '  their block columns run 0..%d, implying about %g degrees per block\n'
+        '  this run is tiled at %g degrees, giving zone columns 0..%d\n'
+        '  only %d of %d zones (%.1f%%) find a calibration key, below the required %.0f%%\n'
+        'A key is a grid position with no grid attached, so the names still match for the few that\n'
+        'coincide -- and those take coefficients from a different place. Either set\n'
+        'p.processing_resolution to %g to match the calibration, or point\n'
+        'calibration_parameters_source at a file fitted for %g degrees.'
+        % (coefficients_path, max(columns), implied, processing_resolution,
+           max(int(z.split('_')[0]) for z in zone_ids), len(matched), len(wanted),
+           100 * coverage, 100 * minimum_coverage, implied, processing_resolution))
+
+
 def protected_class_labels(all_class_labels, changing_class_labels,
                            additional_protected_class_labels=None):
     """The classes nothing may be allocated onto.
@@ -1618,6 +1720,40 @@ def resolve_additional_protected_class_labels(p):
     if not text or text.lower() in ('nan', 'none'):
         return []
     return [part.strip() for part in text.replace(',', ' ').split() if part.strip()]
+
+
+def _stitched_check_record_path(projected_path):
+    return projected_path + '.non_changing_check.json'
+
+
+def _stitched_check_record(projected_path, base_path):
+    """The record of a passed non-changing check: size and mtime of the two rasters it read."""
+    record = {}
+    for label, path in (('map', projected_path), ('base', base_path)):
+        st = os.stat(path)
+        record[label] = {'path': str(path), 'size': st.st_size, 'mtime': st.st_mtime}
+    return record
+
+
+def stitched_map_already_checked(projected_path, base_path):
+    """True when the non-changing-classes check already passed on these very files (same size and
+    mtime of map and base). A rebuilt or touched map is checked again; a missing record means the
+    map predates the record and is checked once more."""
+    record_path = _stitched_check_record_path(projected_path)
+    if not os.path.exists(record_path):
+        return False
+    try:
+        with open(record_path, encoding='utf-8') as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return old == _stitched_check_record(projected_path, base_path)
+
+
+def record_stitched_map_checked(projected_path, base_path):
+    """Write the record a passed check leaves beside the map."""
+    with open(_stitched_check_record_path(projected_path), 'w', encoding='utf-8') as f:
+        json.dump(_stitched_check_record(projected_path, base_path), f, indent=2)
 
 
 def assert_non_changing_classes_unchanged(projected_path, base_path, all_class_labels,
@@ -1909,4 +2045,191 @@ def rebase_project_paths(coefficients_df, fine_processed_inputs_dir, base_year=N
 
         out['data_location'] = out['data_location'].map(rebase_shared)
 
+    return out
+
+
+def coarse_years_available(source_dir):
+    """The years the coarse model has a state for here, read off the directory names."""
+    if not os.path.isdir(source_dir):
+        return []
+    return sorted(int(name) for name in os.listdir(source_dir)
+                  if name.isdigit() and os.path.isdir(os.path.join(source_dir, name)))
+
+
+def bracketing_coarse_years(source_dir, target_year):
+    """The two available coarse years either side of target_year, or None if it needs no interpolation.
+
+    Read from the data rather than named in a config, so a coarse model with different time steps
+    needs no edit and a target year that IS a step is correctly left alone.
+
+    Returns:
+        tuple or None: (earlier, later), or None when target_year is already available or cannot be
+        bracketed.
+    """
+    years = coarse_years_available(source_dir)
+    target_year = int(target_year)
+    if target_year in years:
+        return None
+    earlier = [y for y in years if y < target_year]
+    later = [y for y in years if y > target_year]
+    if not earlier or not later:
+        return None
+    return max(earlier), min(later)
+
+
+def interpolate_coarse_state_at_year(source_dir, target_year, bracketing_years, filename_template,
+                                     match_path=None, dst_dir=None, dst_filename_template=None):
+    """Write a coarse state for a year the coarse model has no time step at, from the two it brackets.
+
+    Coarse land-use models step every five years, so a fine base year taken from observed land cover
+    (ESA 2022, relabelled 2023) has no matching coarse state. Differencing from the nearest step
+    instead spans a longer interval than the run does -- 2020->2030 where 2023->2030 belongs -- and
+    that matters because the coarse map enters allocation as an ANOMALY added to the regional total
+    (covariate_sum_shift), so its amplitude is not renormalised away. A 10-year anomaly used for a
+    7-year interval overstates the spatial contrast by 10/7.
+
+    Linear between the brackets, which is the assumption the alternative makes anyway, over a five-
+    year gap instead of a ten-year one.
+
+    Args:
+        source_dir (str): directory holding one subdirectory per coarse year.
+        target_year (int): the year to write, e.g. 2023.
+        bracketing_years (tuple): the two coarse years around it, e.g. (2020, 2025).
+        filename_template (str): filename with {year} where the year appears.
+        match_path (str): raster whose geotransform the output copies; defaults to the earlier bracket's.
+        dst_dir (str or None): where to write, when the state belongs somewhere other than beside its
+            own brackets. The first difference of every scenario starts from ONE common state in the
+            baseline tree, so the reference trajectory's interpolation is written there rather than
+            into the trajectory's own directory. None writes beside the brackets, as before.
+        dst_filename_template (str or None): the name to write under, when the destination tree names
+            its files differently from the source tree. Defaults to filename_template.
+
+    Returns:
+        list: the paths written.
+
+    Raises:
+        NameError: if target_year is not strictly between the brackets, or a bracket file is absent.
+    """
+    earlier, later = int(bracketing_years[0]), int(bracketing_years[1])
+    target_year = int(target_year)
+    if not earlier < target_year < later:
+        raise NameError('%d is not strictly between the bracketing years %d and %d'
+                        % (target_year, earlier, later))
+    weight = (target_year - earlier) / (later - earlier)
+
+    dst_dir = dst_dir or os.path.join(source_dir, str(target_year))
+    dst_filename_template = dst_filename_template or filename_template
+    hb.create_directories(dst_dir)
+    earlier_path = os.path.join(source_dir, str(earlier), filename_template.format(year=earlier))
+    later_path = os.path.join(source_dir, str(later), filename_template.format(year=later))
+    for path in (earlier_path, later_path):
+        if not hb.path_exists(path):
+            raise NameError('cannot interpolate %d: %s is missing' % (target_year, path))
+    dst_path = os.path.join(dst_dir, dst_filename_template.format(year=target_year))
+    if hb.path_exists(dst_path):
+        return []
+    earlier_array = hb.as_array(earlier_path).astype('float64')
+    later_array = hb.as_array(later_path).astype('float64')
+    hb.save_array_as_geotiff(earlier_array + weight * (later_array - earlier_array),
+                             dst_path, match_path or earlier_path)
+    return [dst_path]
+
+
+def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
+                         hectares_per_cell_path, class_indices, dst_path=None):
+    """Per coarse cell and class, what the allocation was asked for against what it did.
+
+    The allocator places EXPANDING classes on ranked cells and whatever occupies the chosen cell is
+    displaced, so a contraction target is never executed directly. Nothing downstream records that,
+    which is what this function supplies: the demanded change, the realised change, and the stock
+    that was available to give. A contraction demand larger than the stock cannot be met by any
+    allocation, and that is reported rather than silently absorbed by whichever class gives way.
+
+    This is a diagnostic. It reads finished outputs and changes no allocation.
+
+    Args:
+        coarse_change_paths (dict): class label -> the demand raster the allocator was given, in
+            hectares on the coarse grid.
+        input_lulc_path (str): the fine LULC the allocation started from.
+        output_lulc_path (str): the fine LULC it produced, on the same grid.
+        hectares_per_cell_path (str): hectares per fine cell, on the same grid as the LULC.
+        class_indices (dict): class label -> the integer the LULC uses for it.
+        dst_path (str or None): where to write the CSV; None returns the frame without writing.
+
+    Returns:
+        pd.DataFrame: one row per coarse cell and class, with demanded_ha, realised_ha,
+        available_ha and infeasible.
+
+    Raises:
+        ValueError: if the two LULC rasters or the hectares raster are not on one grid, if a demand
+            raster carries a non-finite value it does not declare as nodata, if it marks a cell
+            holding allocatable land as nodata, or if it does not cover the fine grid.
+    """
+    import numpy as np
+    import pandas as pd
+    import rasterio
+
+    with rasterio.open(input_lulc_path) as a, rasterio.open(output_lulc_path) as b, \
+            rasterio.open(hectares_per_cell_path) as h:
+        if not (a.shape == b.shape == h.shape and a.transform == b.transform == h.transform):
+            raise ValueError('input LULC, output LULC and hectares-per-cell must share one grid; got '
+                             '%s, %s, %s' % (a.shape, b.shape, h.shape))
+        before, after, ha, fine = a.read(1), b.read(1), h.read(1).astype(np.float64), a.transform
+
+    rows = []
+    for label, path in sorted(coarse_change_paths.items()):
+        with rasterio.open(path) as c:
+            demand, coarse, shape = c.read(1).astype(np.float64), c.transform, c.shape
+            ndv = c.nodata
+        # Nodata is only ever accepted OUTSIDE the allocation footprint. A cell holding allocatable
+        # land whose demand is nodata has a MISSING demand, which is not the same as no change, and
+        # reading it as zero would report that cell as satisfied. The footprint is not known until
+        # the starting stock is summed, so the mask is carried down to the check below.
+        if ndv is not None and np.isfinite(ndv):
+            missing = demand == ndv
+        elif ndv is not None:
+            missing = ~np.isfinite(demand)
+        else:
+            missing = np.zeros(demand.shape, dtype=bool)
+        demand = np.where(missing, 0.0, demand)
+        nonfinite = int((~np.isfinite(demand)).sum())
+        if nonfinite:
+            raise ValueError('%s carries %d non-finite demand cell(s); treating them as zero would '
+                             'report an unmet demand as satisfied' % (path, nonfinite))
+        # Every fine cell's coarse home, from the two transforms rather than an assumed ratio.
+        lat = fine.f + (np.arange(before.shape[0]) + 0.5) * fine.e
+        lon = fine.c + (np.arange(before.shape[1]) + 0.5) * fine.a
+        cr = ((lat - coarse.f) / coarse.e).astype(np.int64)
+        cc = ((lon - coarse.c) / coarse.a).astype(np.int64)
+        outside = int((cr < 0).sum() + (cr >= shape[0]).sum()
+                      + (cc < 0).sum() + (cc >= shape[1]).sum())
+        if outside:
+            raise ValueError('%s does not cover the fine grid: %d fine row/column centre(s) fall '
+                             'outside it. Clamping them into edge cells would attribute that land '
+                             'to the wrong coarse cell' % (path, outside))
+        flat = cr[:, None] * shape[1] + cc[None, :]
+        idx = class_indices[label]
+        n = shape[0] * shape[1]
+        stock = np.bincount(flat.ravel(), weights=np.where(before == idx, ha, 0.0).ravel(), minlength=n)
+        ended = np.bincount(flat.ravel(), weights=np.where(after == idx, ha, 0.0).ravel(), minlength=n)
+        want = demand.ravel()
+        inside = np.flatnonzero(missing.ravel() & ((stock > 0) | (ended > 0)))
+        if inside.size:
+            raise ValueError('%s marks %d cell(s) as nodata that hold allocatable land; a missing '
+                             'demand is not no demand, and reading it as zero would report those '
+                             'cells as satisfied. First: %s'
+                             % (path, inside.size,
+                                [(int(c // shape[1]), int(c % shape[1])) for c in inside[:5]]))
+        # A cell is reported when anything was demanded, anything was there to take, or anything
+        # ENDED there. The last is the case a demand-and-stock test misses: the output gaining a
+        # class that was never demanded and never present is precisely what this should surface.
+        for cell in np.flatnonzero((want != 0) | (stock > 0) | (ended != 0)):
+            rows.append(dict(coarse_row=int(cell // shape[1]), coarse_col=int(cell % shape[1]),
+                             class_label=label, demanded_ha=float(want[cell]),
+                             realised_ha=float(ended[cell] - stock[cell]),
+                             available_ha=float(stock[cell]),
+                             infeasible=bool(want[cell] < 0 and -want[cell] > stock[cell])))
+    out = pd.DataFrame(rows)
+    if dst_path:
+        out.to_csv(dst_path, index=False)
     return out
