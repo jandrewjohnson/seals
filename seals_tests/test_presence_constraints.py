@@ -137,3 +137,14 @@ def test_a_protection_layer_row_is_not_reset():
     cc = ['class_' + c for c in SEALS7_CHANGING]
     row = out[out['spatial_regressor_name'] == '30by30'][cc].iloc[0].tolist()
     assert row == [0.0, 0.0, 0.0, 1.0, 1.0], 'the protection row was rebuilt away'
+
+
+def test_the_standard_scenarios_protect_urban():
+    """default_global_coefficients.csv protects urban by a zero row, which the rebuild resets."""
+    from pathlib import Path
+
+    import seals
+
+    scenarios = pd.read_csv(Path(seals.__file__).parent / 'input_template' / 'standard_scenarios.csv',
+                            encoding='utf-8-sig')
+    assert (scenarios['additional_protected_class_labels'] == 'urban').all()

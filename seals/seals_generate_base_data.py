@@ -396,7 +396,6 @@ def lulc_convolutions(p):
                     # current_bulk_convolution_path = current_convolution_path.replace(hb.PRIMARY_DRIVE, hb.EXTERNAL_BULK_DATA_DRIVE)
                     # current_input_binary_path = os.path.join(p.base_data_dir, 'lulc', 'esa', p.lulc_simplification_label, 'binaries', str(label), 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.base_year) + '_class_' + str(class_id) + '_binary.tif')
                     current_file_root = 'binary_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label)
-                    current_input_binary_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year), 'binary_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label)+'.tif')
                     # current_input_binary_path = p.lulc_simplified_binary_paths[current_file_root]
 
                     # First, define where the file should be created
@@ -415,6 +414,9 @@ def lulc_convolutions(p):
                         
                         # A little awkward, but here i don't follow the full ref-path approach because in this project it is in a seals folder wrapper, but i don't really want to have that in the base data cause this lulc is not seals specific.
                         current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
+
+                        # The binary found by lulc_binaries, which is in base_data in most global runs.
+                        current_input_binary_path = {str(k): v for k, v in p.aoi_binary_paths.items()}[str(year)][label]
                         
                         hb.log(' Starting FFT Gaussian (in parallel) on ' + current_input_binary_path + 
                                ' and saving to ' + p.lulc_simplified_convolution_paths[current_convolution_name])

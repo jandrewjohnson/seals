@@ -18,8 +18,7 @@ def table():
 
 
 def resolved():
-    return resolve_constraint_layers(table(), '/proj/fine_processed_inputs',
-                                     'mapbiomas_300m', 'seals7', 2020)
+    return resolve_constraint_layers(table(), 'mapbiomas_300m', 'seals7', 2020)
 
 
 def test_the_layer_year_becomes_the_base_year_being_allocated_from():
@@ -30,12 +29,12 @@ def test_the_layer_year_becomes_the_base_year_being_allocated_from():
     assert water.endswith('binary_mapbiomas_300m_seals7_2020_water.tif')
 
 
-def test_a_foreign_project_path_is_replaced_by_this_run_s():
-    """A coefficient file calibrated elsewhere points at a directory that need not exist."""
+def test_a_foreign_project_path_is_replaced_by_a_relative_one():
+    """The allocation resolves the relative path in fine_processed_inputs or base_data."""
     out = resolved()
 
-    assert out.loc[0, 'data_location'].startswith('/proj/fine_processed_inputs')
-    assert 'somewhere/else' not in out.loc[0, 'data_location']
+    assert out.loc[0, 'data_location'] == 'lulc/mapbiomas_300m/seals7/binaries/2020/binary_mapbiomas_300m_seals7_2020_water.tif'
+
 
 
 def test_both_row_naming_conventions_are_resolved():
