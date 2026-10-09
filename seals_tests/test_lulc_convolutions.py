@@ -8,6 +8,7 @@ import pytest
 from seals import seals_generate_base_data
 
 BINARY = Path('lulc') / 'esa' / 'seals7' / 'binaries' / '2020' / 'binary_esa_seals7_2020_forest.tif'
+CONVOLUTION = Path('lulc') / 'esa' / 'seals7' / 'convolutions' / '2020' / 'convolution_esa_seals7_2020_forest_gaussian_1.tif'
 
 
 class FakePool:
@@ -28,7 +29,7 @@ class FakePool:
         pass
 
 
-def project(tmp_path: Path, **attributes) -> SimpleNamespace:
+def project(tmp_path: Path, status: str = 'unknown') -> SimpleNamespace:
     """A global run whose binary is in base_data and whose convolution is missing."""
     fine, base = tmp_path / 'fine_processed_inputs', tmp_path / 'base_data'
     binary = base / BINARY
@@ -43,7 +44,9 @@ def project(tmp_path: Path, **attributes) -> SimpleNamespace:
         run_this=True, aoi='global', all_class_labels=['forest'], gaussian_sigmas_to_test=[1],
         years_to_convolve_override=None, key_base_year=2020, lulc_src_label='esa',
         lulc_simplification_label='seals7', fine_processed_inputs_dir=str(fine), base_data_dir=str(base),
-        aoi_binary_paths={2020: {'forest': str(binary)}}, get_path=get_path, **attributes)
+        aoi_binary_paths={2020: {'forest': str(binary)}}, get_path=get_path,
+        lulc_layer_status=status, lulc_layer_search_dirs=[str(fine), str(tmp_path / 'input')],
+        promote_lulc_layers_to_base_data=False)
 
 
 def test_convolution_reads_the_found_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,3 +55,14 @@ def test_convolution_reads_the_found_binary(tmp_path: Path, monkeypatch: pytest.
     seals_generate_base_data.lulc_convolutions(project(tmp_path))
 
     assert FakePool.scheduled[0][0] == str(tmp_path / 'base_data' / BINARY)
+
+
+def test_mismatch_rebuilds_convolution_in_the_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(seals_generate_base_data.multiprocessing, 'Pool', FakePool)
+    p = project(tmp_path, 'mismatch')
+    (tmp_path / 'base_data' / CONVOLUTION).parent.mkdir(parents=True)
+    (tmp_path / 'base_data' / CONVOLUTION).write_text('x')
+
+    seals_generate_base_data.lulc_convolutions(p)
+
+    assert FakePool.scheduled[0][2] == str(tmp_path / 'fine_processed_inputs' / CONVOLUTION)
