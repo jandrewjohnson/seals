@@ -1,27 +1,22 @@
 # Installation
 
-SEALS is installed directly from the Git repository as an *editable install* in a conda environment. 
+SEALS is published on conda-forge as the package `sealsmodel` (the name `seals`
+was already taken; you still `import seals`). One `mamba install` gives you SEALS,
+hazelbean and the whole geospatial stack as prebuilt binaries for Windows, macOS
+and Linux. No compiler and no clone are needed.
 
-## 1. Install git and Miniforge/Conda
+The [developer install](#developer-install) below, an editable install from a
+clone of the repository, is still the right choice if you intend to change SEALS
+itself. For everyone else, the conda-forge package is the install.
 
-If not already installed:
+## 1. Install Miniforge
 
-- **git** — <https://git-scm.com/downloads>. The install starts from a clone.
-- **Miniforge** — <https://github.com/conda-forge/miniforge>. Install for your
-  user account only, and accept the option to add it to your `PATH`.
+If not already installed: **Miniforge** — <https://github.com/conda-forge/miniforge>.
+Install for your user account only, and accept the option to add it to your
+`PATH`. Miniforge ships both `conda` and `mamba` and is preconfigured to use the
+conda-forge channel, which is where `sealsmodel` lives.
 
-## 2. Install a C/C++ compiler
-
-SEALS compiles a Cython extension (`seals/seals_cython_functions.pyx`) when it is
-installed from source, so **a C/C++ compiler is required** — see
-[Compiling C/C++ Code](https://justinandrewjohnson.com/earth_economy_devstack/installation.html#compiling-cc-code).
-
-- **macOS:** `xcode-select --install`
-- **Windows:** Visual Studio Build Tools, or run `install.bat` from the
-  Earth-Economy Devstack repository root
-- **Linux:** `gcc` is usually already present
-
-## 3. Create and activate an environment
+## 2. Create and activate an environment
 
 ```bash
 conda create -n <your_env>
@@ -31,46 +26,107 @@ conda activate <your_env>
 Pick your own environment name — the devstack does not require a particular one.
 Always activate it before running SEALS scripts.
 
-The environment starts empty; Python arrives in step 4 as a dependency of
-hazelbean, at a version conda knows hazelbean was built for.
+The environment starts empty on purpose; Python arrives in step 3 as a dependency
+of `sealsmodel`, at a version conda knows the package was built for.
 
-## 4. Install hazelbean and the dependency stack from conda-forge
-
-This is the step that makes the editable install below work, so do not skip it —
-it is where hazelbean, GDAL, NumPy and the rest of the geospatial stack come
-from, as conda builds rather than pip wheels:
+## 3. Install SEALS from conda-forge
 
 ```bash
-conda install hazelbean cython libgdal-hdf5
+mamba install sealsmodel
 ```
 
-This may take 5–10 minutes.
+This is the whole install. The solve may take several minutes the first time
+because it brings in hazelbean, GDAL, NumPy and the rest of the stack as conda
+builds. `conda install sealsmodel` works too, just more slowly.
 
-## 5. Clone SEALS into the devstack layout
+## 4. Verify
 
-You may clone SEALS wherever you want, however documentation here assumes the repo lives in its own project folder under `~/Files/`
-(`C:\Users\<you>\Files\` on Windows). The command below clones it into a `seals` subfolder in files.
+```bash
+python -c "import seals, hazelbean; print(seals.__file__)"
+```
+
+A path inside your environment's `site-packages` is the expected answer for this
+install. Then go to [Quickstart](quickstart.qmd), which makes a first run from a
+project folder of your own.
+
+To upgrade later, run `mamba update sealsmodel` in the activated environment.
+
+## Developer install {#developer-install}
+
+Use this when you want to edit SEALS and see the change the next time you run
+it: an *editable install* of a clone, with the Cython extension compiled on your
+machine. It replaces step 3 above; steps 1 and 2 still apply.
+
+### a. Install git and a C/C++ compiler
+
+- **git** — <https://git-scm.com/downloads>. The install starts from a clone.
+- SEALS compiles a Cython extension (`seals/seals_cython_functions.pyx`) when it
+  is installed from source, so **a C/C++ compiler is required** — see
+  [Compiling C/C++ Code](https://justinandrewjohnson.com/earth_economy_devstack/installation.html#compiling-cc-code).
+  - **macOS:** `xcode-select --install`
+  - **Windows:** Visual Studio Build Tools, or run `install.bat` from the
+    Earth-Economy Devstack repository root
+  - **Linux:** `gcc` is usually already present
+
+### b. Get the dependency stack from conda-forge
+
+The clone needs hazelbean, GDAL, NumPy and friends as conda builds, not pip
+wheels. Either install `sealsmodel` and then remove just the package, keeping
+everything it pulled in:
+
+```bash
+mamba install sealsmodel
+conda remove sealsmodel --force
+```
+
+or install the dependencies directly:
+
+```bash
+mamba install hazelbean cython libgdal-hdf5
+```
+
+Removing the package is what keeps a packaged copy from shadowing your clone.
+Use `conda remove --force`, not `pip uninstall`: conda owns the package, and pip
+leaves zombie folders behind.
+
+### c. Clone SEALS into the devstack layout
+
+You may clone SEALS wherever you want, but the documentation assumes the repo
+lives in its own project folder under `~/Files/`
+(`C:\Users\<you>\Files\` on Windows). The command below clones it into a `seals`
+subfolder there.
 
 ```bash
 mkdir -p ~/Files/seals && cd ~/Files/seals
 git clone https://github.com/jandrewjohnson/seals.git
 ```
 
-## 6. Make the editable install
+The second `seals` is the repository itself. Projects, and everything SEALS
+writes, go beside it in the first `seals`.
 
-Note that the second `seals` is the actual repository. Projects will and all written files will go in the first `seals`.
+### d. Make the editable install
 
 ```bash
 cd ~/Files/seals/seals
 pip install -e . --no-deps
 ```
 
-`--no-deps` is deliberate, and required. SEALS declares `hazelbean>=2.0.0` as its
-only runtime dependency, and you already have it from step 4. Letting pip resolve
+`--no-deps` is deliberate, and required. SEALS declares `hazelbean>=2.1.0` as its
+only runtime dependency, and you already have it from step b. Letting pip resolve
 dependencies again tends to replace conda's builds of the geospatial stack (GDAL
 and friends) with incompatible wheels.
 
-## 8. Other devstack repos (optional)
+### e. Verify
+
+```bash
+python -c "import seals; print(seals.__file__)"
+```
+
+For this install the path must be inside your clone, not under `site-packages`.
+If it is under `site-packages`, a packaged copy is shadowing the clone: remove it
+as in step b and redo the editable install.
+
+### Other devstack repos (optional)
 
 The same clone-and-editable-install pattern works for the rest of the stack, each
 in its own `~/Files/<name>/` project folder:
@@ -81,7 +137,7 @@ in its own `~/Files/<name>/` project folder:
 All but `global_invest_dev` are private; ask for read access before cloning them.
 
 See the [full installation guide](https://justinandrewjohnson.com/earth_economy_devstack/installation.html)
-for the devstack-wide version of these steps.
+for the devstack-wide version of these steps, including the hazelbean clone.
 
 ## Troubleshooting
 
@@ -93,8 +149,17 @@ conda works in it; conda may need adding to `PATH` manually; and Windows may sho
 "Windows protected your PC" on the Miniforge installer (click *More info* → *Run
 anyway*).
 
-If `import seals` resolves to `site-packages`, see the verify step in 7 — an
-installed copy is shadowing your clone.
+If you made the developer install and `import seals` resolves to
+`site-packages`, see [step e](#developer-install) — an installed copy is
+shadowing your clone.
+
+If an import fails on Windows 11 with `ImportError: DLL load failed ... An
+Application Control policy has blocked this file`, Windows **Smart App Control**
+is blocking a compiled extension (statsmodels' and SEALS' own, among others) in
+the newly created environment. It is a per-machine Windows Security setting
+(*App & browser control*), not an install error, and it blocks any unsigned
+binary conda unpacks; turning it off is the fix, but note that Windows does not
+allow it to be switched back on without a reinstall.
 
 ## Next
 

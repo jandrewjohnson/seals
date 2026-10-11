@@ -19,3 +19,6 @@ user-level config for yours).
 ## Package
 
 Installable package name: `sealsmodel` (import as `seals`). Tests live in `seals_tests/`.
+
+Published on conda-forge: `mamba install sealsmodel` is the documented user
+install; developers use `pip install -e . --no-deps` from this clone.

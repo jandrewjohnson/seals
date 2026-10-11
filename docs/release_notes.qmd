@@ -7,6 +7,15 @@ For the shared platform beneath SEALS — hazelbean, ProjectFlow and the
 conventions — see the
 [Earth-Economy Devstack release notes](https://justinandrewjohnson.com/earth_economy_devstack/release_notes.html).
 
+## SEALS on conda-forge (2026-10-10)
+
+- SEALS is now published on conda-forge as **`sealsmodel`** (the name `seals`
+  was taken; the import is still `import seals`), prebuilt for Windows, macOS
+  and Linux. `mamba install sealsmodel` is now the documented install: it brings
+  hazelbean and the geospatial stack with it and needs no compiler or clone.
+  The editable install from a clone remains as the developer install. See
+  [Installation](installation.qmd).
+
 ## SEALS v2.0.0 (2026-07-30)
 
 **Run-file spec: three complexity axes, and `run_project(p)`.**

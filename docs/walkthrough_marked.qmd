@@ -21,13 +21,15 @@ format:
 ::: r-fit-text
 - Follow the [installation](installation.qmd) page first, or the shorter
   [quickstart](quickstart.qmd) if you just want to run the model
-- Clone SEALS into the devstack layout — its own project folder under
-  `~/Files/`, at `~/Files/seals/seals`. Hazelbean is not cloned; it comes from
-  conda-forge
+- This deck reads the SEALS source, so it assumes the developer install: a
+  clone in the devstack layout — its own project folder under `~/Files/`, at
+  `~/Files/seals/seals`. Hazelbean is not cloned; it comes from conda-forge
+- Users of the conda-forge `sealsmodel` package find the same files under
+  `site-packages/seals/`
 - The layout is not cosmetic: ProjectFlow reads it to decide where project
   directories go
-- You know the install worked if this prints a path inside `~/Files/`, not
-  inside `site-packages`:
+- You know the developer install worked if this prints a path inside
+  `~/Files/`, not inside `site-packages`:
 
 ``` bash
 python -c "import seals; print(seals.__file__)"

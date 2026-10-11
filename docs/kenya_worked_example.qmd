@@ -44,23 +44,25 @@ Before beginning, ensure you have:
 :::
 
 ::: {.callout-note collapse="true"}
-## Basic Hazelbean Installation
+## Install SEALS from conda-forge
 
-Hazelbean is the core dependency for running SEALS. Install it with these commands:
+SEALS is on conda-forge as `sealsmodel`, prebuilt for Windows, macOS and Linux.
+The package brings hazelbean and the geospatial stack with it, so this is the
+whole install and no compiler or clone is needed:
 
 ``` bash
 # Initialize conda (may not be needed depending on your shell configuration)
 conda init
 
 # Create a new environment (pick your own name in place of <your_env>)
-# No Python version: conda picks one hazelbean is built for in the next step
+# No Python version: conda picks one sealsmodel is built for in the next step
 conda create -n <your_env>
 
 # Activate the environment
 conda activate <your_env>
 
-# Install hazelbean and the geospatial stack from conda-forge
-mamba install hazelbean cython libgdal-hdf5
+# Install SEALS, hazelbean and the geospatial stack from conda-forge
+mamba install sealsmodel
 ```
 
 **Note:** The `mamba install` command may take 5-10 minutes to complete.
@@ -68,7 +70,11 @@ mamba install hazelbean cython libgdal-hdf5
 
 ------------------------------------------------------------------------
 
-### SEALS Repository Installation
+### Developer Installation (optional)
+
+Only needed if you intend to edit SEALS itself. It replaces `mamba install
+sealsmodel` above with an editable install from a clone, which has to compile
+the Cython extension on your machine.
 
 ::: {.callout-note collapse="true"}
 ## Step 1: Install C/C++ Compiler
@@ -97,7 +103,22 @@ This installs Xcode Command Line Tools including gcc and clang compilers.
 :::
 
 ::: {.callout-note collapse="true"}
-## Step 2: Clone SEALS Repository
+## Step 2: Get the dependencies without a packaged SEALS
+
+``` bash
+conda activate <your_env>
+
+# Hazelbean and the geospatial stack from conda-forge
+mamba install hazelbean cython libgdal-hdf5
+
+# If sealsmodel is already installed, remove just the package (dependencies stay)
+# so that it cannot shadow your clone
+conda remove sealsmodel --force
+```
+:::
+
+::: {.callout-note collapse="true"}
+## Step 3: Clone SEALS Repository
 
 Clone the repository to your local machine:
 
@@ -109,7 +130,7 @@ git clone https://github.com/jandrewjohnson/seals
 :::
 
 ::: {.callout-note collapse="true"}
-## Step 3: Install as Editable Package
+## Step 4: Install as Editable Package
 
 ``` bash
 # Activate your conda environment
@@ -118,7 +139,7 @@ conda activate <your_env>
 # Navigate to the cloned repository
 cd C:/Users/<username>/Files/seals/seals
 
-# Install as editable package
+# Install as editable package (--no-deps is required: the stack came from conda)
 pip install -e . --no-deps
 ```
 :::
@@ -178,7 +199,10 @@ This basic test verifies your installation is working correctly.
 
 **Steps:**
 
-1.  Locate `run_seals.py` in `seals/seals/`
+1.  Locate `run_seals.py`. With the developer install it is in the clone at
+    `seals/seals/`. With the conda-forge install, set up a project folder with
+    a run file and scenarios CSV as shown in the
+    [Quickstart](quickstart.qmd#run-it) and use that folder instead.
 
 2.  Ensure your conda environment is activated:
 

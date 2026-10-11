@@ -3,8 +3,13 @@
 ## Getting set up
 
 - Follow the [installation](installation.qmd) page first. 
-- This guide assumes you installed SEALS using the devstack layout — its own project folder under
-  `~/Files/`, with the repo inside it at `~/Files/seals/seals`. 
+- This guide reads the SEALS source, so it assumes the developer install: a
+  clone in the devstack layout — its own project folder under `~/Files/`, with
+  the repo inside it at `~/Files/seals/seals`. 
+- If you installed the `sealsmodel` package from conda-forge instead, the same
+  files are in your environment's `site-packages/seals/`; everything below
+  still applies, and `python -c "import seals; print(seals.__file__)"` tells
+  you where to look.
   
 
 ## Explore the SEALS code
