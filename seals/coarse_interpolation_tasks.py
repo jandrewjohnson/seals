@@ -35,8 +35,21 @@ def coarse_interpolated_states(p):
             for directory,name in destinations:
                 out=directory/name.format(year=year);manifest=out.with_suffix('.json')
                 signature=dict(inputs=hashes,target_year=year,brackets=brackets,implementation=[hb.hash_file_path(__file__),hb.hash_file_path(seals_utils.__file__)])
-                superseded=[]
-                if out.exists():
+                superseded=[];marker=out.with_name(out.name+'.publishing.json')
+                # Recovery for an interruption between the two replacements below. The marker
+                # exists only inside that window, so finding one means the previous process died
+                # mid-publication and the raster and its manifest may disagree. That is a known
+                # state, not corruption: recompute, which is idempotent, rather than raising on
+                # the hash mismatch it would otherwise look like.
+                if marker.exists():
+                    interrupted=json.loads(marker.read_text())
+                    print('coarse_interpolated_states: recovering interrupted publication of %s '
+                          '(prior version at %s)'%(out,interrupted.get('superseded_path')),flush=True)
+                    kept=Path(interrupted['superseded_path']) if interrupted.get('superseded_path') else None
+                    if not out.exists() and kept is not None and kept.exists():
+                        # Died between moving the prior version aside and publishing the new one.
+                        os.replace(kept,out)
+                elif out.exists():
                     if manifest.exists():
                         previous=json.loads(manifest.read_text())
                         current=json.loads(json.dumps(signature))
@@ -88,9 +101,24 @@ def coarse_interpolated_states(p):
                     hb.save_array_as_geotiff(values,str(staging),match)
                 else:shutil.copy2(inputs[0],staging)
                 digest=hb.hash_file_path(str(staging))
+                # Keep the PRIOR RASTER, not merely its hash. A hash cannot reconstruct a file,
+                # and the version being replaced was produced by an implementation this checkout
+                # no longer contains, so it is not recomputable from the inputs either. One slot
+                # per output, overwritten each time, bounds the cost: this task writes per
+                # scenario/year/class -- roughly 1,700 outputs for the full run -- not per tile,
+                # so the slot adds ~1,700 files, unlike the ~300,000-tile allocation tree.
+                kept_path=out.with_name(out.stem+'.superseded'+out.suffix) if out.exists() else None
+                marker.write_text(json.dumps(dict(output=str(out),manifest=str(manifest),
+                    superseded_path=str(kept_path) if kept_path else None,
+                    new_output_sha256=digest,signature=signature),indent=2))
+                if kept_path is not None:
+                    os.replace(out,kept_path)
+                    superseded=(superseded or [])
+                    superseded.append(dict(path=str(kept_path),output_sha256=hb.hash_file_path(str(kept_path))))
                 os.replace(staging,out)
                 record=dict(signature=signature,output_sha256=digest)
                 if superseded:record['superseded']=superseded
                 manifest_staging=manifest.with_suffix('.json.tmp')
                 manifest_staging.write_text(json.dumps(record,indent=2))
                 os.replace(manifest_staging,manifest)
+                marker.unlink()
