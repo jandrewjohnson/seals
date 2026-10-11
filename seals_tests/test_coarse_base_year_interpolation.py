@@ -94,3 +94,39 @@ def test_missing_bracket_file_raises(coarse_tree, tmp_path):
 
 # Publication, common-reference routing and resume are tested through the task in
 # test_allocation_task_outputs.py. The numerical helper no longer writes files.
+
+
+def test_a_stale_output_is_replaced_without_ever_being_unlinked(tmp_path):
+    """Recomputing a stale interpolation must not destroy what was there first.
+
+    The first version of this fix called out.unlink() and manifest.unlink() before rebuilding, so
+    an interrupted recompute left a hole where an output used to be, and the record of what had
+    been produced was gone. Build beside the target and os.replace instead.
+    """
+    import json
+    import os
+    out = tmp_path / 'state.tif'
+    manifest = out.with_suffix('.json')
+    out.write_bytes(b'original raster bytes')
+    manifest.write_text(json.dumps(dict(signature={'implementation': ['old']}, output_sha256='old-digest')))
+
+    # The replacement, as the task performs it: stage, hash, replace, then rewrite the manifest.
+    staging = out.with_name(out.name + '.rebuilding')
+    staging.write_bytes(b'rebuilt raster bytes')
+    assert out.read_bytes() == b'original raster bytes', 'the original must survive staging'
+    previous = json.loads(manifest.read_text())
+    superseded = previous.get('superseded', []) + [
+        dict(signature=previous['signature'], output_sha256=previous['output_sha256'])]
+    os.replace(staging, out)
+    assert out.read_bytes() == b'rebuilt raster bytes'
+    assert not staging.exists(), 'no stray staging file is left behind'
+
+    record = dict(signature={'implementation': ['new']}, output_sha256='new-digest', superseded=superseded)
+    manifest_staging = manifest.with_suffix('.json.tmp')
+    manifest_staging.write_text(json.dumps(record))
+    os.replace(manifest_staging, manifest)
+
+    written = json.loads(manifest.read_text())
+    assert written['superseded'][0]['output_sha256'] == 'old-digest', 'the prior version is recorded'
+    assert written['superseded'][0]['signature'] == {'implementation': ['old']}
+    assert not manifest.with_suffix('.json.tmp').exists()
