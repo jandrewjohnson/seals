@@ -35,11 +35,24 @@ def coarse_interpolated_states(p):
                 out=directory/name.format(year=year);manifest=out.with_suffix('.json')
                 signature=dict(inputs=hashes,target_year=year,brackets=brackets,implementation=[hb.hash_file_path(__file__),hb.hash_file_path(seals_utils.__file__)])
                 if out.exists():
-                    if not manifest.exists():raise RuntimeError(f'Interpolation lacks provenance: {out}')
-                    previous=json.loads(manifest.read_text())
-                    if previous['signature']!=json.loads(json.dumps(signature)) or previous['output_sha256']!=hb.hash_file_path(str(out)):
-                        raise RuntimeError(f'Interpolation provenance differs: {out}')
-                    continue
+                    stale=True
+                    if manifest.exists():
+                        previous=json.loads(manifest.read_text())
+                        stale=(previous['signature']!=json.loads(json.dumps(signature))
+                               or previous['output_sha256']!=hb.hash_file_path(str(out)))
+                    if not stale:continue
+                    # A derived raster whose provenance no longer matches is a STALE CACHE, so
+                    # recompute it. Raising here, as this did, made every existing project
+                    # directory permanently unusable after any edit to this module or to
+                    # seals_utils -- the signature carries their file hashes -- and in a parallel
+                    # run the first tile aborted everything. It also never self-healed: the same
+                    # test failed on every rerun with unchanged code once a stale output existed.
+                    # Contrast allocation_audit, where a provenance mismatch MUST raise, because
+                    # an acceptance record is evidence rather than a cache and overwriting one
+                    # would destroy the proof that a map was physically checked.
+                    print(f'coarse_interpolated_states: recomputing stale {out}',flush=True)
+                    out.unlink()
+                    manifest.unlink(missing_ok=True)
                 directory.mkdir(parents=True,exist_ok=True)
                 if brackets:
                     values,match=seals_utils.interpolate_coarse_state_at_year(str(source),year,brackets,template)

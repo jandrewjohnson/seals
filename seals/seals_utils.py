@@ -2200,3 +2200,28 @@ def coarse_state_dir(p, *parts):
         candidate=os.path.join(generated,*parts)
         if os.path.isdir(candidate):return candidate
     return os.path.join(p.coarse_simplified_proportion_dir,*parts)
+
+def regressor_type_codes(types, gaussian_sigmas_to_test):
+    """Map spatial-regressor type names to the integer codes the allocator takes.
+
+    multiplicative is 1; additive is 2; an adjacency regressor is additive with preprocessing, so
+    gaussian_<sigma> is also 2, but only for a sigma that was actually tested -- an untested sigma
+    names coefficients that were never fitted, and is an error rather than a default.
+
+    Args:
+        types (iterable): the `type` column of a spatial regressors or combined calibration table.
+        gaussian_sigmas_to_test (iterable): p.gaussian_sigmas_to_test.
+
+    Returns:
+        numpy.ndarray: int64 codes, one per entry of `types`.
+
+    Raises:
+        ValueError: if any type is not one of the admitted names.
+    """
+    codes = {'multiplicative': 1, 'additive': 2}
+    codes.update({'gaussian_' + str(sigma): 2 for sigma in gaussian_sigmas_to_test})
+    try:
+        return np.asarray([codes[i] for i in types], np.int64)
+    except KeyError as error:
+        raise ValueError('Unknown regressor type %s; the admitted names are %s'
+                         % (error, sorted(codes))) from error

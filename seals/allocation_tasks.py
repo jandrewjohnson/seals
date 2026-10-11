@@ -9,6 +9,7 @@ import json
 import numpy as np
 import pandas as pd
 import hazelbean as hb
+from seals import seals_utils
 from seals import signed_allocation as signed
 
 
@@ -33,8 +34,10 @@ def read_inputs(p):
     if not all(c in df for c in columns):columns=labels
     if not all(c in df for c in columns):raise ValueError('Missing named class coefficient columns')
     coefficients=df[columns].apply(pd.to_numeric).to_numpy(dtype=float).T
-    types=np.array([1 if t=='multiplicative' else 2 if t=='additive' or str(t).startswith('gaussian_') else 0 for t in df.type],dtype=np.int64)
-    if np.any(types==0):raise ValueError('Unknown regressor type')
+    # Shared with the standard allocation path rather than restated here. The restatement this
+    # replaces accepted ANY 'gaussian_*' string, so a table carrying a sigma that was never fitted
+    # was silently coded as additive instead of failing.
+    types = seals_utils.regressor_type_codes(df.type, p.gaussian_sigmas_to_test)
     layer_paths=[]
     for value in df.data_location:
         value=Path(str(value))
