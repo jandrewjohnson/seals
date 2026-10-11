@@ -1,0 +1,48 @@
+"""Own interpolated coarse states in a separate ProjectFlow output directory."""
+from pathlib import Path
+import json
+import shutil
+import hazelbean as hb
+from seals import seals_utils
+
+
+def coarse_interpolated_states(p):
+    """Publish the fine-base-year state, including the common reference state.
+
+    Only this task writes interpolation products. The proportion source tree is
+    read-only; downstream readers resolve this output first for generated years.
+    """
+    if not p.run_this:return
+    root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
+    for _,row in p.scenarios_df.iterrows():
+        seals_utils.assign_df_row_to_object_attributes(p,row)
+        if p.scenario_type=='baseline':continue
+        raw=row['key_base_year'];year=int(raw[0] if isinstance(raw,(tuple,list)) else str(raw).split()[0])
+        parts=(p.exogenous_label,p.climate_label,p.model_label,p.counterfactual_label)
+        source=Path(p.coarse_simplified_proportion_dir).joinpath(*parts)
+        brackets=seals_utils.bracketing_coarse_years(str(source),year)
+        if brackets is None and year not in seals_utils.coarse_years_available(str(source)):
+            raise ValueError(f'Cannot bracket coarse base year {year}: {source}')
+        correspondence=hb.utils.get_reclassification_dict_from_df(p.get_path(p.coarse_correspondence_path,possible_dirs=[p.input_dir,p.base_data_dir]),'src_id','dst_id','src_label','dst_label')
+        for label in correspondence['dst_labels']:
+            template=f'{label}_prop_{p.exogenous_label}_{p.climate_label}_{p.model_label}_{p.counterfactual_label}_{{year}}.tif'
+            destinations=[(root.joinpath(*parts,str(year)),template)]
+            if p.scenario_type=='baseline_ignore_dependencies':
+                destinations.append((root/p.exogenous_label/p.model_label/str(year),f'{label}_prop_{p.exogenous_label}_{p.model_label}_{{year}}.tif'))
+            inputs=[source/str(y)/template.format(year=y) for y in (brackets or [year])]
+            hashes={str(q):hb.hash_file_path(str(q)) for q in inputs}
+            for directory,name in destinations:
+                out=directory/name.format(year=year);manifest=out.with_suffix('.json')
+                signature=dict(inputs=hashes,target_year=year,brackets=brackets,implementation=[hb.hash_file_path(__file__),hb.hash_file_path(seals_utils.__file__)])
+                if out.exists():
+                    if not manifest.exists():raise RuntimeError(f'Interpolation lacks provenance: {out}')
+                    previous=json.loads(manifest.read_text())
+                    if previous['signature']!=json.loads(json.dumps(signature)) or previous['output_sha256']!=hb.hash_file_path(str(out)):
+                        raise RuntimeError(f'Interpolation provenance differs: {out}')
+                    continue
+                directory.mkdir(parents=True,exist_ok=True)
+                if brackets:
+                    values,match=seals_utils.interpolate_coarse_state_at_year(str(source),year,brackets,template)
+                    hb.save_array_as_geotiff(values,str(out),match)
+                else:shutil.copy2(inputs[0],out)
+                manifest.write_text(json.dumps(dict(signature=signature,output_sha256=hb.hash_file_path(str(out))),indent=2))

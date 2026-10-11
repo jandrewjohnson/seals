@@ -1858,7 +1858,8 @@ def allocation_zones(p):
         for c, fine_block in enumerate(old_global_processing_blocks_list):
             tile_dir = str(fine_block[0]) + '_' + str(fine_block[1])
             expected_path = os.path.join(p.cur_dir, tile_dir, 'allocation', 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
-            if not hb.path_exists(expected_path):
+            if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' or not hb.path_exists(expected_path):
+                # Strict allocation must inspect inputs and audit even on resume.
                 fine_blocks_list.append(old_fine_blocks_list[c])
                 coarse_blocks_list.append(old_coarse_blocks_list[c])
                 processing_blocks_list.append(old_processing_blocks_list[c])
@@ -2016,6 +2017,8 @@ def allocation(passed_p=None):
     # Actually do the allocation
 
     p = passed_p
+    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict':
+        raise RuntimeError('Cell-residual allocation requires the budget/allocation/reconciliation/audit task sequence')
 
     start = time.time()
     if p.run_this:
@@ -2581,6 +2584,8 @@ def stitched_lulc_simplified_scenarios(p):
 
 
         vrt_paths_to_remove = []
+        strict_stitched = []
+        strict_baseline_hashes = {}
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Stitching for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)))
@@ -2599,10 +2604,24 @@ def stitched_lulc_simplified_scenarios(p):
 
                     p.lulc_projected_stitched_path = os.path.join(p.cur_dir, stitched_output_name + '.tif')
 
+                    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict':
+                        from seals.allocation_provenance import validated_tiles, check_stitched_resume, record_stitched
+                        accepted_tiles = validated_tiles(target_dir, include_string)
+                        strict_base = p.get_path('lulc', p.lulc_src_label, p.lulc_simplification_label,
+                            'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif',
+                            prepend_possible_dirs=p.fine_processed_inputs_dir)
+                        if strict_base not in strict_baseline_hashes:
+                            strict_baseline_hashes[strict_base] = hb.hash_file_path(strict_base)
+                        baseline_provenance = {strict_base: strict_baseline_hashes[strict_base]}
+                        check_stitched_resume(p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance)
+                        strict_stitched.append((p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance))
+
                     if not hb.path_exists(p.lulc_projected_stitched_path):
                         # Walking the allocation zones is minutes per map on a shared filesystem; it is
                         # only needed when there is something to stitch.
                         p.layers_to_stitch = hb.list_filtered_paths_recursively(target_dir, include_strings=include_string, include_extensions='.tif', depth=None)
+                        if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' and set(p.layers_to_stitch) != set(accepted_tiles):
+                            raise RuntimeError('Stitch tile set differs from accepted footprint')
                         if len(p.layers_to_stitch) > 0:
                             hb.log('Stitching for year ' + str(year))
                             hb.log('Stitching ' + str(len(p.layers_to_stitch)) + ' layers, first 1 of which was: ' + str(p.layers_to_stitch[:1]))
@@ -2735,6 +2754,8 @@ def stitched_lulc_simplified_scenarios(p):
         # Even with 256gb memory, running 30 parallel pogers at once hits a ZSTD-related compression memory error.
         if current_force_to_global_bb:
             hb.make_paths_pogs_in_parallel(p.cur_dir, exclude_strings='2025', max_workers=16, dont_actually_do_it=False, verbose=True, verbose_pog_check=True)
+        for path, tiles, baseline in strict_stitched:
+            record_stitched(path, tiles, baseline)
 
 def luh_seals_baseline_adjustment(p):
     # SHORTCUT, this should have been put in GTAP project but i'm racing.

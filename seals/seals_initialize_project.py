@@ -234,6 +234,8 @@ def build_standard_task_tree(p):
     p.coarse_change_task = p.add_task(seals_process_coarse_timeseries.coarse_change, skip_existing=0)
     p.extraction_task = p.add_task(seals_process_coarse_timeseries.coarse_extraction, parent=p.coarse_change_task, run=1, skip_existing=0)
     p.coarse_simplified_task = p.add_task(seals_process_coarse_timeseries.coarse_simplified_proportion, parent=p.coarse_change_task, skip_existing=0)
+    from seals.coarse_interpolation_tasks import coarse_interpolated_states
+    p.coarse_interpolated_states_task = p.add_task(coarse_interpolated_states, parent=p.coarse_change_task, skip_existing=0)
     p.coarse_simplified_ha_task = p.add_task(seals_process_coarse_timeseries.coarse_simplified_ha, parent=p.coarse_change_task, skip_existing=0)
     p.coarse_simplified_ha_difference_from_previous_year_task = p.add_task(seals_process_coarse_timeseries.coarse_simplified_ha_difference_from_previous_year, parent=p.coarse_change_task, skip_existing=0)
 
@@ -243,7 +245,11 @@ def build_standard_task_tree(p):
     ##### ALLOCATION #####
     p.allocations_task = p.add_iterator(seals_main.allocations, skip_existing=0)
     p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, parent=p.allocations_task, skip_existing=0)
-    p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task, skip_existing=0)
+    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict':
+        from seals.allocation_tasks import add_allocation_tasks
+        add_allocation_tasks(p, p.allocation_zones_task)
+    else:
+        p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task, skip_existing=0)
 
     ##### STITCH ZONES #####
     p.stitched_lulc_simplified_scenarios_task = p.add_task(seals_main.stitched_lulc_simplified_scenarios)
