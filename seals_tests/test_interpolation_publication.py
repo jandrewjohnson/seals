@@ -63,6 +63,24 @@ def _change_implementation(salt='-edited'):
             lambda: setattr(module.hb, 'hash_file_path', real))
 
 
+def _rebuild_differently(monkeypatch, value):
+    """Make the rebuild produce DIFFERENT bytes without touching the inputs.
+
+    This is what a real code change does: same sources, same input hashes, a different result.
+    It is also the only way to observe the slot being overwritten -- an implementation-only
+    rebuild that returns the same numbers is byte-identical, so a test asserting on the slot's
+    content cannot tell a preserved original from a new raster written over it.
+    """
+    real = seals_utils.interpolate_coarse_state_at_year
+
+    def different(source, target_year, brackets, filename_template, *a, **k):
+        values, match = real(source, target_year, brackets, filename_template, *a, **k)
+        return np.full_like(values, value), match
+
+    monkeypatch.setattr('seals.coarse_interpolation_tasks.seals_utils.interpolate_coarse_state_at_year',
+                        different)
+
+
 def test_a_rebuild_keeps_the_prior_raster_as_a_file(tmp_path, monkeypatch):
     p, sources, published = _project(tmp_path, monkeypatch)
     coarse_interpolated_states(p)
@@ -219,3 +237,97 @@ def test_a_changed_input_still_raises_rather_than_replacing(tmp_path, monkeypatc
         coarse_interpolated_states(p)
     kept = published.with_name(published.stem + '.superseded' + published.suffix)
     assert not kept.exists(), 'nothing is replaced when an input changed, so nothing is superseded'
+
+
+def _published_bytes(published):
+    return published.read_bytes()
+
+
+def test_recovery_does_not_overwrite_the_saved_original(tmp_path, monkeypatch):
+    """The kill-between-raster-and-manifest case must not destroy the preserved version.
+
+    At that point `out` already holds the NEW raster. The rebuild's move-aside would then shove
+    the new raster into the superseded slot and overwrite the original it was keeping, so the
+    original bytes would be gone after a recovery that looked successful.
+    """
+    p, sources, published = _project(tmp_path, monkeypatch)
+    coarse_interpolated_states(p)
+    original = published.read_bytes()
+
+    real_replace = os.replace
+
+    def die_before_manifest(src, dst):
+        if str(dst).endswith('.json'):
+            raise KeyboardInterrupt('killed between raster and manifest replacement')
+        return real_replace(src, dst)
+
+    apply_edit, restore = _change_implementation()
+    apply_edit()
+    _rebuild_differently(monkeypatch, 0.9)
+    monkeypatch.setattr('seals.coarse_interpolation_tasks.os.replace', die_before_manifest)
+    with pytest.raises(KeyboardInterrupt):
+        coarse_interpolated_states(p)
+
+    root = Path(p.coarse_interpolated_states_dir)
+    marker = list(root.rglob('*.publishing.json'))[0]
+    intent = json.loads(marker.read_text())
+    slot = Path(intent['superseded_path'])
+    assert slot.is_file(), 'the original was moved aside before the kill'
+    preserved = slot.read_bytes()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(hb.utils, 'get_reclassification_dict_from_df', lambda *a: {'dst_labels': ['forest']})
+    _rebuild_differently(monkeypatch, 0.9)
+    apply_edit()
+    try:
+        coarse_interpolated_states(p)
+    finally:
+        restore()
+
+    assert published.read_bytes() != original, 'the rebuild really did produce different bytes'
+    assert slot.is_file(), 'the slot must still hold a version after recovery'
+    assert slot.read_bytes() == preserved, 'recovery must not overwrite the saved original'
+    assert slot.read_bytes() == original
+    assert not list(root.rglob('*.publishing.json'))
+
+
+def test_a_second_interruption_still_leaves_the_original_recoverable(tmp_path, monkeypatch):
+    """Interrupt the recovery itself. The preserved version must survive that too."""
+    p, sources, published = _project(tmp_path, monkeypatch)
+    coarse_interpolated_states(p)
+    original = published.read_bytes()
+    real_replace = os.replace
+
+    def die_after_moving_aside(src, dst):
+        if '.rebuilding' in str(src):
+            raise KeyboardInterrupt('killed after the prior version was moved aside')
+        return real_replace(src, dst)
+
+    apply_edit, restore = _change_implementation()
+    apply_edit()
+    _rebuild_differently(monkeypatch, 0.9)
+    monkeypatch.setattr('seals.coarse_interpolation_tasks.os.replace', die_after_moving_aside)
+    with pytest.raises(KeyboardInterrupt):
+        coarse_interpolated_states(p)
+
+    root = Path(p.coarse_interpolated_states_dir)
+    marker = list(root.rglob('*.publishing.json'))[0]
+    slot = Path(json.loads(marker.read_text())['superseded_path'])
+    assert slot.read_bytes() == original
+
+    # Now interrupt the RECOVERY, at the same point.
+    with pytest.raises(KeyboardInterrupt):
+        coarse_interpolated_states(p)
+    assert slot.is_file(), 'an interrupted recovery must not consume the preserved version'
+    assert slot.read_bytes() == original
+
+    monkeypatch.undo()
+    monkeypatch.setattr(hb.utils, 'get_reclassification_dict_from_df', lambda *a: {'dst_labels': ['forest']})
+    _rebuild_differently(monkeypatch, 0.9)
+    apply_edit()
+    try:
+        coarse_interpolated_states(p)
+    finally:
+        restore()
+    assert slot.read_bytes() == original, 'and it survives the completed recovery'
+    assert Path(json.loads(marker.read_text())['output']).is_file() if marker.exists() else True

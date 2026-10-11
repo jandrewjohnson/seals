@@ -41,14 +41,24 @@ def coarse_interpolated_states(p):
                 # mid-publication and the raster and its manifest may disagree. That is a known
                 # state, not corruption: recompute, which is idempotent, rather than raising on
                 # the hash mismatch it would otherwise look like.
+                already_superseded=False
                 if marker.exists():
                     interrupted=json.loads(marker.read_text())
                     print('coarse_interpolated_states: recovering interrupted publication of %s '
                           '(prior version at %s)'%(out,interrupted.get('superseded_path')),flush=True)
                     kept=Path(interrupted['superseded_path']) if interrupted.get('superseded_path') else None
-                    if not out.exists() and kept is not None and kept.exists():
-                        # Died between moving the prior version aside and publishing the new one.
-                        os.replace(kept,out)
+                    if kept is not None and kept.exists():
+                        # The slot ALREADY holds the version this attempt superseded, so the
+                        # rebuild below must not move anything into it again. Without this the
+                        # kill-between-raster-and-manifest case destroys the saved original: `out`
+                        # holds the NEW raster by then, and moving that aside overwrites the
+                        # original the slot was keeping.
+                        already_superseded=True
+                        if not out.exists():
+                            # Died between moving the prior version aside and publishing the new
+                            # one. COPY it back rather than moving it, so the preserved version
+                            # stays in its slot even if this recovery is itself interrupted.
+                            shutil.copy2(kept,out)
                 elif out.exists():
                     if manifest.exists():
                         previous=json.loads(manifest.read_text())
@@ -107,9 +117,11 @@ def coarse_interpolated_states(p):
                 # per output, overwritten each time, bounds the cost: this task writes per
                 # scenario/year/class -- roughly 1,700 outputs for the full run -- not per tile,
                 # so the slot adds ~1,700 files, unlike the ~300,000-tile allocation tree.
-                kept_path=out.with_name(out.stem+'.superseded'+out.suffix) if out.exists() else None
+                kept_path=None if already_superseded else (
+                    out.with_name(out.stem+'.superseded'+out.suffix) if out.exists() else None)
+                slot=out.with_name(out.stem+'.superseded'+out.suffix)
                 marker.write_text(json.dumps(dict(output=str(out),manifest=str(manifest),
-                    superseded_path=str(kept_path) if kept_path else None,
+                    superseded_path=str(slot) if (kept_path or (already_superseded and slot.exists())) else None,
                     new_output_sha256=digest,signature=signature),indent=2))
                 if kept_path is not None:
                     os.replace(out,kept_path)
