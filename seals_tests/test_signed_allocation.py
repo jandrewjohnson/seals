@@ -52,3 +52,62 @@ def test_multiple_donor_rounding_preserves_feasible_contractions():
     after,audit=m.allocate_cell(b,h,mask,ranks,demand)
     assert audit['accepted']
     assert np.all((after==b)|(after==5))
+
+
+def _grid_module():
+    """The real signed_allocation, loaded without importing the raster stack."""
+    import sys, types
+    root = Path(__file__).parents[1] / 'seals'
+    pkg = types.ModuleType('isolated_seals'); pkg.__path__ = [str(root)]
+    sys.modules['isolated_seals'] = pkg
+    spec = importlib.util.spec_from_file_location('isolated_seals.signed_allocation',
+                                                  root / 'signed_allocation.py')
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+
+
+def _two_cells(cell_demands):
+    """A 10x20 grid of OtherNat as two 10x10 coarse cells, each asked for cropland."""
+    mod = _grid_module()
+    before = np.full((10, 20), 5)
+    hectares = np.ones_like(before, dtype=float)
+    mask = np.ones_like(before)
+    layers = np.ones((1, 10, 20)); coef = np.ones((5, 1)); kinds = np.array([2])
+    requests = np.zeros((5, 1, 2)); requests[1, 0] = list(cell_demands)
+    after, _, _, audit = mod.allocate_grid(requests, before, hectares, mask, layers, coef, kinds)
+    return after, audit
+
+
+def test_a_cell_is_unaffected_by_its_neighbours_demand():
+    """No cross-cell redistribution: the left cell's pixels must not depend on the right cell's ask."""
+    left_a, _ = _two_cells([80, 20])
+    left_b, _ = _two_cells([80, 5])
+    left_c, _ = _two_cells([80, 0])
+    np.testing.assert_array_equal(left_a[:, :10], left_b[:, :10])
+    np.testing.assert_array_equal(left_a[:, :10], left_c[:, :10])
+    # And the right cell did change, so the test is not passing because nothing moved at all.
+    assert (left_a[:, 10:] == 2).sum() == 20
+    assert (left_b[:, 10:] == 2).sum() == 5
+    assert (left_c[:, 10:] == 2).sum() == 0
+
+
+def test_twenty_eighty_is_the_mirror_of_eighty_twenty_not_merely_different():
+    """The 80/20 vs 20/80 distinction the October 5 defect destroyed by flattening both to 50/50.
+
+    Asserting only that the two runs differ would also pass for a wrong-but-asymmetric result.
+    The realised counts must swap exactly with the requests.
+    """
+    forward, _ = _two_cells([80, 20])
+    reverse, _ = _two_cells([20, 80])
+    assert ((forward[:, :10] == 2).sum(), (forward[:, 10:] == 2).sum()) == (80, 20)
+    assert ((reverse[:, :10] == 2).sum(), (reverse[:, 10:] == 2).sum()) == (20, 80)
+    # Neither was flattened towards the mean of the two asks.
+    for realised in (forward, reverse):
+        assert (realised[:, :10] == 2).sum() != 50
+        assert (realised[:, 10:] == 2).sum() != 50
+
+
+def test_othernat_absorbs_each_cells_balance_independently():
+    _, audit = _two_cells([80, 20])
+    assert [entry['budget']['target_ha'][4] for entry in audit] == [-80, -20]
+    assert [entry['budget']['expansion_factor'] for entry in audit] == [1.0, 1.0]

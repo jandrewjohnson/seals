@@ -134,8 +134,28 @@ def allocation(p):
         return
     p._cell_allocation_failure=None
     cumulative=np.maximum(data['cumulative'],changed)
+    # The reference raster supplies the projection and data type, NOT the extent. save_array_as_geotiff
+    # takes n_cols/n_rows from the match raster whenever the caller leaves them None -- its
+    # array.shape fallback sits after that block and so never runs -- so passing the AOI-wide base
+    # here wrote a 4680x6120 raster carrying this TILE's geotransform, and the audit read back
+    # (4680,6120) against a (360,360) input. Job 3467067. State the tile's own dimensions.
     for path,values,ndv,dtype in [(outputs[0],after,255,1),(outputs[1],cumulative,-9999,5)]:
-        hb.save_array_as_geotiff(values,str(path),data['base'],geotransform_override=data['geotransform'],ndv=ndv,data_type=dtype,compress=True)
+        hb.save_array_as_geotiff(values,str(path),data['base'],geotransform_override=data['geotransform'],
+                                 n_cols=values.shape[1],n_rows=values.shape[0],
+                                 ndv=ndv,data_type=dtype,compress=True)
+        # Verify on READBACK, before anything consumes these. A candidate whose extent or
+        # geotransform silently disagrees with the arrays it was allocated from cannot be
+        # reconciled or audited meaningfully, and the mismatch surfaced three tasks downstream.
+        written=hb.get_raster_info_hb(str(path))
+        if tuple(written['raster_size'])!=(values.shape[1],values.shape[0]):
+            raise RuntimeError('%s written as %s but the allocated array is %s (cols,rows). The '
+                               'reference raster supplies projection and type, never extent.'
+                               %(path,tuple(written['raster_size']),(values.shape[1],values.shape[0])))
+        if not np.allclose(np.asarray(written['geotransform'],dtype=float),
+                           np.asarray(data['geotransform'],dtype=float),rtol=0,atol=1e-12):
+            raise RuntimeError('%s geotransform %s differs from the tile geotransform %s, so its '
+                               'pixels do not sit where the allocation placed them.'
+                               %(path,tuple(written['geotransform']),tuple(data['geotransform'])))
     record=dict(status='candidate',input_signature=data['signature'],budget_sha256=hb.hash_file_path(str(budget_path)),
                 cells=pixels,outputs={q.name:hb.hash_file_path(str(q)) for q in outputs})
     tmp=candidate.with_suffix('.tmp');tmp.write_text(json.dumps(record,indent=2));tmp.replace(candidate)
