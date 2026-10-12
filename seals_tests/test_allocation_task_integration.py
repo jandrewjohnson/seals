@@ -46,7 +46,7 @@ def project(tmp_path):
 def configure_year(p,tmp_path,year,previous):
     p.year=year;p.previous_year=previous
     root=Path(p.allocations_dir)/'ssp2/rcp26/magpie/net_zero'/str(year)/'allocation_zones'
-    p.cur_dir=str(root/'0_0/allocation');p.cur_dir_parent_dir=str(root/'0_0');Path(p.cur_dir).mkdir(parents=True,exist_ok=True)
+    p.cur_dir=str(root/'0_0');p.cur_dir_parent_dir=str(root/'0_0');Path(p.cur_dir).mkdir(parents=True,exist_ok=True)
     (root/'global_processing_blocks_list.csv').write_text('0,0,1,1\n')
     p.projected_coarse_change_dir=str(tmp_path/'requests'/str(year))
     for c in p.changing_class_labels:
@@ -57,9 +57,9 @@ def configure_year(p,tmp_path,year,previous):
 def run_tile_tasks(p):
     root=Path(p.cur_dir_parent_dir)
     for task in (tasks.zone_change_budgets,tasks.allocation,tasks.allocation_reconciliation,tasks.allocation_audit):
-        p.cur_dir=str(root/task.__name__);Path(p.cur_dir).mkdir(parents=True,exist_ok=True)
+        p.cur_dir=str(root);Path(p.cur_dir).mkdir(parents=True,exist_ok=True)
         task(p)
-    p.cur_dir=str(root/'allocation')
+    p.cur_dir=str(root)
 
 
 def test_real_allocation_resume_and_stitch(tmp_path):
@@ -96,8 +96,14 @@ def test_projectflow_stops_before_downstream_on_invalid_resume(tmp_path):
         flow=hb.ProjectFlow(project_dir=str(tmp_path/'flow'))
         for key,value in vars(fixture).items():setattr(flow,key,value)
         flow.run_in_parallel=False
+        # Mirror the real tree: the four tasks are children of the allocation-zones ITERATOR and
+        # share the tile's own directory, which is what creates_dir=False selects under an
+        # iterator. Registering them on a flat tree would exercise a layout production never uses.
+        def allocation_zones(p):
+            p.iterator_replacements={'cur_dir_parent_dir':[str(task_dir)]}
+        zones=flow.add_iterator(allocation_zones,run_in_parallel=False)
         for task in (tasks.zone_change_budgets,tasks.allocation,tasks.allocation_reconciliation,tasks.allocation_audit):
-            flow.add_task(task,task_dir=str(Path(task_dir).parent/task.__name__),skip_existing=0)
+            flow.add_task(task,parent=zones,skip_existing=0,creates_dir=False)
         def downstream(p):
             if p.run_this:(tmp_path/'DOWNSTREAM_RAN').write_text('ran')
         flow.add_task(downstream,skip_existing=0)
@@ -115,7 +121,7 @@ def test_projectflow_stops_before_downstream_on_invalid_resume(tmp_path):
 def test_stitch_refuses_missing_planned_tile(tmp_path):
     from seals.allocation_provenance import validated_tiles
     p=project(tmp_path);configure_year(p,tmp_path,2030,2023);run_tile_tasks(p)
-    root=Path(p.cur_dir).parents[1]
+    root=Path(p.cur_dir).parents[0]
     (root/'global_processing_blocks_list.csv').write_text('0,0,1,1\n1,0,1,1\n')
     with pytest.raises(RuntimeError,match='Missing strict tile acceptance'):
         validated_tiles(root.parent,'lulc_esa_seals7_ssp2_rcp26_magpie_net_zero_2030.tif')

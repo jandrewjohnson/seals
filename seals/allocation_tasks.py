@@ -97,13 +97,13 @@ def read_inputs(p):
         if not footprint.is_file():raise RuntimeError(f'Missing predecessor footprint: {footprint}')
         blocks=np.loadtxt(footprint,delimiter=',',dtype=int,ndmin=2)
         if root.name not in {f'{r[0]}_{r[1]}' for r in blocks}:continue
-        audit_path=prior/'allocation_audit/accepted.json'
+        audit_path=prior/'accepted.json'
         audit=json.loads(audit_path.read_text())
         if audit['status']!='accepted':raise RuntimeError('Unaccepted predecessor')
         for name,digest in audit['outputs'].items():
-            if hb.hash_file_path(str(prior/'allocation'/name))!=digest:raise RuntimeError('Predecessor output differs from acceptance')
-        before=hb.as_array(str(prior/'allocation'/map_name(p,year))).astype(np.int64)
-        cumulative=hb.as_array(str(prior/'allocation/cumulative_change_happened.tif')).astype(np.int64)
+            if hb.hash_file_path(str(prior/name))!=digest:raise RuntimeError('Predecessor output differs from acceptance')
+        before=hb.as_array(str(prior/map_name(p,year))).astype(np.int64)
+        cumulative=hb.as_array(str(prior/'cumulative_change_happened.tif')).astype(np.int64)
         predecessor={'audit':str(audit_path),'sha256':hb.hash_file_path(str(audit_path))}
         break
     mask=np.where(cumulative==1,0,mask)
@@ -153,7 +153,7 @@ def allocation(p):
     """
     if not p.run_this:return
     data=checked_inputs(p);root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
-    budget_path=root.parent/'zone_change_budgets/budgets.json'
+    budget_path=root/'budgets.json'
     budget=json.loads(budget_path.read_text())
     if budget['input_signature']!=data['signature']:raise RuntimeError('Budget provenance differs')
     candidate=root/'candidate.json';outputs=[root/map_name(p),root/'cumulative_change_happened.tif']
@@ -168,7 +168,7 @@ def allocation(p):
     try:
         after,_,changed,pixels=signed.allocate_budget_grid(np.asarray(budget['targets']),**args)
     except signed.AllocationFailure as error:
-        p._cell_allocation_failure=(str(root.parent),error)
+        p._cell_allocation_failure=(str(root),error)
         return
     p._cell_allocation_failure=None
     cumulative=np.maximum(data['cumulative'],changed)
@@ -205,8 +205,8 @@ def allocation_reconciliation(p):
     failure=getattr(p,'_cell_allocation_failure',None)
     if failure and failure[0]==str(Path(p.cur_dir_parent_dir)):return
     data=checked_inputs(p);root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
-    budget=json.loads((root.parent/'zone_change_budgets/budgets.json').read_text())
-    after=hb.as_array(str(root.parent/'allocation'/map_name(p)))
+    budget=json.loads((root/'budgets.json').read_text())
+    after=hb.as_array(str(root/map_name(p)))
     rows=[]
     windows={(r,c):w for r,c,w in signed.cell_windows(data['arrays']['requests'],data['arrays']['before'])}
     for cell in budget['cells']:
@@ -226,18 +226,18 @@ def allocation_audit(p):
     if not p.run_this:return
     root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True);data=checked_inputs(p)
     failure=getattr(p,'_cell_allocation_failure',None)
-    if failure and failure[0]==str(root.parent):
+    if failure and failure[0]==str(root):
         error=failure[1]
         np.savez_compressed(root/'failed_cell.npz',**error.inputs)
         (root/'failure.json').write_text(json.dumps(dict(status='failed',cell=error.cell,error=str(error),input_signature=data['signature']),indent=2))
         raise RuntimeError(f'Allocation audit failed; exact inputs: {root}/failed_cell.npz') from error
-    budget_path=root.parent/'zone_change_budgets/budgets.json';budget=json.loads(budget_path.read_text())
-    candidate_path=root.parent/'allocation/candidate.json';candidate=json.loads(candidate_path.read_text())
+    budget_path=root/'budgets.json';budget=json.loads(budget_path.read_text())
+    candidate_path=root/'candidate.json';candidate=json.loads(candidate_path.read_text())
     if candidate['input_signature']!=data['signature'] or budget['input_signature']!=data['signature'] or candidate['budget_sha256']!=hb.hash_file_path(str(budget_path)):
         raise RuntimeError('Audit input provenance differs')
     for name,digest in candidate['outputs'].items():
-        if hb.hash_file_path(str(root.parent/'allocation'/name))!=digest:raise RuntimeError('Candidate output differs')
-    after=hb.as_array(str(root.parent/'allocation'/map_name(p)))
+        if hb.hash_file_path(str(root/name))!=digest:raise RuntimeError('Candidate output differs')
+    after=hb.as_array(str(root/map_name(p)))
     arrays=data['arrays'];targets=np.asarray(budget['targets']);rows=[]
     for cr,cc,w in signed.cell_windows(targets,arrays['before']):
         audit=signed.validate_cell(arrays['before'][w],after[w],arrays['hectares'][w],arrays['mask'][w],targets[:,cr,cc])
@@ -245,10 +245,10 @@ def allocation_audit(p):
         if not audit['accepted']:
             (root/'failure.json').write_text(json.dumps(dict(status='failed',cells=rows),indent=2))
             raise RuntimeError('Physical allocation audit failed')
-    cumulative=hb.as_array(str(root.parent/'allocation/cumulative_change_happened.tif'))
+    cumulative=hb.as_array(str(root/'cumulative_change_happened.tif'))
     if not np.array_equal(cumulative,np.maximum(data['cumulative'],after!=arrays['before'])):
         raise RuntimeError('Cumulative mask differs from actual changes')
-    reconciliation=root.parent/'allocation_reconciliation/reconciliation.csv'
+    reconciliation=root/'reconciliation.csv'
     if not reconciliation.is_file():raise RuntimeError('Missing reconciliation task output')
     out=root/'accepted.json'
     record=dict(status='accepted',mode='cell_residual_strict',input_signature=data['signature'],cells=rows,
@@ -263,4 +263,4 @@ def allocation_audit(p):
 def add_allocation_tasks(p, parent):
     """Register real sibling outputs in execution order, with fail-closed resume."""
     for task in (zone_change_budgets,allocation,allocation_reconciliation,allocation_audit):
-        setattr(p,task.__name__+'_task',p.add_task(task,parent=parent,skip_existing=0))
+        setattr(p,task.__name__+'_task',p.add_task(task,parent=parent,skip_existing=0,creates_dir=False))

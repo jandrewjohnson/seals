@@ -14,8 +14,8 @@ def validated_tiles(target_dir, filename):
     blocks = np.loadtxt(blocks_path, delimiter=',', dtype=int, ndmin=2)
     result = {}
     for block in blocks:
-        tile = root / f'{block[0]}_{block[1]}' / 'allocation'
-        audit_path = tile.parent / 'allocation_audit' / 'accepted.json'
+        tile = root / f'{block[0]}_{block[1]}'
+        audit_path = tile / 'accepted.json'
         if not audit_path.is_file():
             raise RuntimeError(f'Missing strict tile acceptance: {audit_path}')
         audit = json.loads(audit_path.read_text())

@@ -165,7 +165,7 @@ def target_zones_matrices(p):
                         # full_change_matrix_no_diagonal = hb.load_geotiff_chunk_by_cr_size(full_change_matrix_no_diagonal_path, offset)
                         # src_dir = os.path.join(p.allocation_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(p.year), offset[0] + '_' + offset[1])
                         for year_c, year in enumerate(p.years):
-                            src_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year), 'allocation_zones', target_zone_string, 'allocation')
+                            src_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year), 'allocation_zones', target_zone_string)
 
 
                             # Get the correct starting year path
@@ -174,14 +174,14 @@ def target_zones_matrices(p):
                                 if year_c == 0:
                                     previous_year = p.key_base_year
                                     correct_dir_year = year
-                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string, 'allocation')
+                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string)
                                     lulc_1_path = os.path.join(previous_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.model_label + '_' + str(previous_year) + '.tif')
 
 
                                 else:
                                     previous_year = p.years[year_c - 1]
                                     correct_dir_year = previous_year
-                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string, 'allocation')
+                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string)
                                     lulc_1_path = os.path.join(previous_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(previous_year) + '.tif')
 
 
@@ -1857,7 +1857,7 @@ def allocation_zones(p):
 
         for c, fine_block in enumerate(old_global_processing_blocks_list):
             tile_dir = str(fine_block[0]) + '_' + str(fine_block[1])
-            expected_path = os.path.join(p.cur_dir, tile_dir, 'allocation', 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
+            expected_path = os.path.join(p.cur_dir, tile_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
             if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' or not hb.path_exists(expected_path):
                 # Strict allocation must inspect inputs and audit even on resume.
                 fine_blocks_list.append(old_fine_blocks_list[c])
