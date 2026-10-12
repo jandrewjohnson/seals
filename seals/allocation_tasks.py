@@ -17,12 +17,50 @@ def map_name(p, year=None):
     return f'lulc_{p.lulc_src_label}_{p.lulc_simplification_label}_{p.exogenous_label}_{p.climate_label}_{p.model_label}_{p.counterfactual_label}_{p.year if year is None else year}.tif'
 
 
+def _block_offsets(block_list):
+    """A block list as integers, whichever path produced it.
+
+    On a FRESH run seals_main builds these with
+    get_subglobal_block_list_from_resolution_and_bb, which yields ints. On a RESUME it reads the
+    precached CSV with hb.file_to_python_object(..., '2d_list') and passes no
+    output_value_data_type, so every element comes back a STRING: measured on this pilot's cached
+    file, ['0', '0', '360', '360', '0', '0']. A string is a sequence, so the geotransform offset
+    below raised "can't multiply sequence by non-int of type 'float'" on the resume path only,
+    after 772 tiles had allocated cleanly on the fresh path. Job 3472099.
+
+    Normalised once, here, because every consumer of these lists is affected, not only the
+    geotransform: the chunk reads take them too.
+
+    Args:
+        block_list (sequence): a block list, or one row of one, as ints, floats or strings.
+
+    Returns:
+        list: the same values as ints.
+
+    Raises:
+        ValueError: if an element is not a whole number. These are pixel indices and sizes; a
+            fractional one means the list is not what this task thinks it is.
+    """
+    out = []
+    for value in block_list:
+        number = float(value)
+        if number != int(number):
+            raise ValueError('block list element %r is not a whole number; these are pixel '
+                             'indices and sizes' % (value,))
+        out.append(int(number))
+    return out
+
+
 def read_inputs(p):
     """Read one tile's standard inputs. No raster/CSV writes or downloads."""
     if list(p.changing_class_indices) != [1,2,3,4,5]:
         raise ValueError('Cell-residual tasks require class codes 1..5')
     if p.calibration_parameters_override_dict or p.use_calibration_created_coefficients:
         raise ValueError('Cell-residual task path requires the explicit combined calibration table; overrides need validation')
+    # Integers, whichever path built these: a resume supplies them as strings from the cached CSV.
+    fine_blocks=_block_offsets(p.fine_blocks_list)
+    coarse_blocks=_block_offsets(p.coarse_blocks_list)
+    global_fine_blocks=_block_offsets(p.global_fine_blocks_list)
     root=Path(p.cur_dir_parent_dir)
     df=p.combined_calibration_parameters_df.copy()
     if 'calibration_block_index' in df:
@@ -45,9 +83,9 @@ def read_inputs(p):
         found=next((q for q in candidates if q.is_file()),None)
         if found is None:raise FileNotFoundError(str(value))
         layer_paths.append(found)
-    layers=np.array([hb.load_geotiff_chunk_by_cr_size(str(q),p.global_fine_blocks_list if hb.get_bounding_box(str(q))==hb.global_bounding_box else p.fine_blocks_list) for q in layer_paths],dtype=float)
+    layers=np.array([hb.load_geotiff_chunk_by_cr_size(str(q),global_fine_blocks if hb.get_bounding_box(str(q))==hb.global_bounding_box else fine_blocks) for q in layer_paths],dtype=float)
     base=Path(p.lulc_simplified_paths[p.key_base_year])
-    before=hb.load_geotiff_chunk_by_cr_size(str(base),p.fine_blocks_list).astype(np.int64)
+    before=hb.load_geotiff_chunk_by_cr_size(str(base),fine_blocks).astype(np.int64)
     mask=(before!=hb.get_ndv_from_path(str(base))).astype(np.int64)
     cumulative=np.zeros_like(mask)
     predecessor={'base':str(base)}
@@ -69,14 +107,14 @@ def read_inputs(p):
         predecessor={'audit':str(audit_path),'sha256':hb.hash_file_path(str(audit_path))}
         break
     mask=np.where(cumulative==1,0,mask)
-    hectares=hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path,p.fine_blocks_list).astype(float)
+    hectares=hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path,fine_blocks).astype(float)
     suffix=f'_{p.year}_{p.previous_year}_ha_diff_{p.exogenous_label}_{p.climate_label}_{p.model_label}_{p.counterfactual_label}.tif'
     request_paths=[Path(p.projected_coarse_change_dir)/(c+suffix) for c in labels]
-    requests=np.array([hb.load_geotiff_chunk_by_cr_size(str(q),p.coarse_blocks_list) for q in request_paths],dtype=float)
+    requests=np.array([hb.load_geotiff_chunk_by_cr_size(str(q),coarse_blocks) for q in request_paths],dtype=float)
     arrays=dict(requests=requests,before=before,hectares=hectares,mask=mask,layers=layers,coefficients=coefficients,types=types)
     digest=hashlib.sha256((signed.input_signature(*arrays.values())+hb.hash_file_path(__file__)+json.dumps(predecessor,sort_keys=True)).encode()).hexdigest()
     gt=list(hb.get_geotransform_path(str(base)))
-    col,row=p.fine_blocks_list[:2];gt[0]+=col*gt[1]+row*gt[2];gt[3]+=col*gt[4]+row*gt[5]
+    col,row=fine_blocks[:2];gt[0]+=col*gt[1]+row*gt[2];gt[3]+=col*gt[4]+row*gt[5]
     return dict(arrays=arrays,coefficients=df,signature=digest,cumulative=cumulative,base=str(base),geotransform=gt,
                 predecessor=predecessor,source_paths=[str(q) for q in request_paths+layer_paths])
 
