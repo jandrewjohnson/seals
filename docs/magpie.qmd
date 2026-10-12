@@ -14,23 +14,21 @@ Orientation notes for setting MAgPIE up, if you have not run it before. The
 MAgPIE tutorials linked above are the authoritative source; these are the points
 worth knowing before you start.
 
-- Clone the development branch:
+- Clone the master branch:
 
 ```
-git clone -b develop https://github.com/magpiemodel/magpie.git magpie_develop
+git clone -b master https://github.com/magpiemodel/magpie.git magpie_master
 ```
 
 - The `input` and `output` folders are in `.gitignore`.
-- MAgPIE has a config folder. `default.cfg` in it is very large, so rather than
-  editing it directly, use a start script that reads lines from the default and
-  overwrites the ones it needs.
-- Start scripts live in the (non-ignored) `scripts/start` folder, for example
-  `test_runs.R`.
-- To run GAMS, see `scripts/start_functions.R`.
+- MAgPIE has a config folder. The config file `config/default.cfg` is very large, so
+  rather than editing it directly, use a start script that reads lines from the default and
+  overwrites the ones it needs (see `scripts/start/projects`for examples).
+- See the tutorial [Starting a MAgPIE run](https://magpiemodel.github.io/tutorials/t05-startrun) and [Creating a start script](https://magpiemodel.github.io/tutorials/t07-startscript) for further information on how to run MAgPIE and update the its settings.
 
-## How the coupling works
+## How the coupling between MAgPIE and SEALS works
 
-For each MAgPIE run, `extra/runSEALSallocation.R` performs the following steps:
+The coupling is automatised through the script `runSEALSallocation.R`, which is part of the MAgPIE repo and found under `scripts/extra/`. For each MAgPIE run, `extra/runSEALSallocation.R` performs the following steps:
 
 1. **Gridded land use for SEALS.** It converts the disaggregated land-use shares `cell.land_0.5_share.mz` (written by `extra/disaggregation.R`) into the NetCDF file `cell.land_0.5_SEALS_<run title>.nc` in the MAgPIE run folder. The file contains the 2020 base year and the years in `cfg$seals_years` (default `c(2020, 2050)`).
 2. **Scenario-specific SEALS inputs.** It reads two templates that are part of the MAgPIE input data (`input/` folder of the MAgPIE directory):
@@ -43,7 +41,7 @@ For each MAgPIE run, `extra/runSEALSallocation.R` performs the following steps:
    - Land conservation: the `land_conservation` regressor, which prevents agricultural expansion in protected areas, uses the protection layer of `c22_protect_scenario`, or of `c22_base_protect` if no protection scenario is set (e.g. `magpie_WDPA.tif`, `magpie_30by30.tif`).
    - Semi-natural vegetation: if `s29_snv_shr` is 0.2, the `snv20_realloc` regressor sets an incentive for the allocation of forest and other natural vegetation and `snv20_expan` constrains cropland expansion, following the semi-natural vegetation (SNV) policy of the MAgPIE run. Other values of `s29_snv_shr` cannot be represented at the 1 x 1 km scale and trigger a warning.
    - Peatland rewetting: if MAgPIE rewets more than 1 % of the peatland area, the `peatland_rewetting` regressor discourages agricultural expansion on peatlands and favours forest and other natural vegetation there.
-3. **SEALS run file.** It reads the standard SEALS run file `seals/run_seals.py` from your SEALS code base and writes a copy `output/seals/scripts/run_seals_<run title>.py` in which the project directory (`output/seals`), the base data directory and the scenario definitions file are set. The project runs with `run_mode='check'`, so all MAgPIE runs share one SEALS project and reuse its prepared input data.
+3. **SEALS run file.** It reads the standard SEALS run file `seals/run_seals.py` from your SEALS code base and writes a copy `output/seals/scripts/run_seals_<run title>.py` in which the project directory (`output/seals`), the base data directory and the scenario definitions file are set, and the computed land cover layers are promoted to the base data (see [Convolution cache](#execution-modes)). The project runs with `run_mode='check'`, so all MAgPIE runs share one SEALS project and reuse its prepared input data.
 4. **SEALS allocation.** It starts SEALS either as a SLURM job or directly on the local machine (see [Execution modes](#execution-modes)).
 
 ## Setup
@@ -104,24 +102,16 @@ select the runs, then `extra` and `runSEALSallocation`, and finally the run subm
 
 With `sealsMode <- "auto"`, the script uses SLURM if the `sbatch` command is available and runs SEALS locally otherwise.
 
-**SLURM (`"slurm"`).** Each MAgPIE run submits its own SEALS job (64 CPUs, qos `short`). The first job also prepares the input data shared by all runs and gets a time limit of 3 h. Its job ID is stored in `output/seals/seals.lock`. All later jobs depend on it (`--dependency=afterok`), reuse its input data and get a time limit of 40 min. If the first job failed, later submissions stop with an error; delete `seals.lock` to start the input data preparation again. The job settings (qos, partition, CPUs, conda activation via miniforge) are tailored to the PIK HPC cluster and may need to be adapted in `.submitSEALS()` for other clusters.
+**SLURM (`"slurm"`).** Each MAgPIE run submits its own SEALS job (32 CPUs, qos `short`). The first job also prepares the input data shared by all runs and gets a time limit of 3 h. Its job ID is stored in `output/seals/seals.lock`. All later jobs depend on it (`--dependency=afterok`), reuse its input data and get a time limit of 40 min. If the first job failed, later submissions stop with an error; delete `seals.lock` to start the input data preparation again. The job settings (qos, partition, CPUs, conda activation via miniforge) are tailored to the PIK HPC cluster and may need to be adapted in `.submitSEALS()` for other clusters.
 
 **Local (`"local"`).** SEALS runs in the R session that executes the output script, via `conda run -n <sealsEnv>`, so `conda` must be on the `PATH`. The R session waits until SEALS has finished. If several MAgPIE runs reach this step at the same time, a lock file (`output/seals/seals_local.lock`) makes them wait, so the SEALS allocations run one after another. The first allocation also prepares the input data and takes the longest; plan for several hours. The SEALS log of each run is written to `output/seals/scripts/outfile_local_<run title>.log`.
 
-**Convolution cache.** In global runs, SEALS reads the simplified land cover map, the class binaries and their convolutions from `<dirBaseData>/lulc/esa/seals7/` if they exist there. Missing layers are computed in `output/seals/intermediate/fine_processed_inputs/lulc/esa/seals7/`. After a first run, the computed convolutions can be copied to the base data, so that later SEALS projects reuse them (2020 is the base year):
-
-```bash
-src=output/seals/intermediate/fine_processed_inputs/lulc/esa/seals7/convolutions/2020
-dst=<dirBaseData>/lulc/esa/seals7/convolutions/2020
-mkdir -p $dst && cp -n $src/*.tif $dst/
-```
-
-SEALS identifies these layers by file name only, and the names are the same for every ESA-to-seals7 correspondence. Copy only layers computed with the correspondence of the coupling (`esa_seals7_correspondence_mosaic-natural.csv`), because SEALS uses layers from another correspondence without an error. With `p.promote_lulc_layers_to_base_data = True` in the SEALS run file, SEALS copies the layers itself and records their correspondence in `<dirBaseData>/lulc/esa/seals7/provenance.json`. A later run with a different correspondence then rebuilds the layers in its own project. `runSEALSallocation.R` does not set this option.
+**Convolution cache.** In global runs, SEALS reads the simplified land cover map, the class binaries and their convolutions from `<dirBaseData>/lulc/esa/seals7/` and computes missing layers in `output/seals/intermediate/fine_processed_inputs/lulc/esa/seals7/`. So that the layers are computed only once for all SEALS projects, `runSEALSallocation.R` sets `p.promote_lulc_layers_to_base_data = True` in the run file. The first run then copies the layers it computed to `<dirBaseData>/lulc/esa/seals7/` and records the correspondence they were built from (`esa_seals7_correspondence_mosaic-natural.csv` for the coupling) in `provenance.json` in that folder. Later projects reuse the layers if their correspondence matches the record and rebuild them in their own project otherwise. Existing files in base_data are never overwritten. Layers that are already in base_data without a record are used with a warning, because SEALS cannot tell which correspondence they were built from; delete them if their origin is unclear.
 
 ### Notes for local runs
 
 - **Python environment.** The editable installs of hazelbean and SEALS compile Cython extensions. On Windows this requires the Visual Studio Build Tools including the Windows SDK (e.g. "Windows 11 SDK"); without the SDK the build fails with `Cannot open include file: 'io.h'`.
-- **Base data.** Everything SEALS needs must be in `dirBaseData` or downloadable from the SEALS cloud bucket. This includes the MAgPIE-specific regressors referenced in `seals_global_coefficients.csv` (e.g. `gpm2.tif`, `magpie_SNV20_realloc.tif`, `magpie_SNV20_expan.tif`, and the protection layers such as `magpie_BH.tif`), since SEALS loads every listed regressor. The precomputed convolutions (`lulc/esa/seals7/convolutions/<year>/`) also come from the bucket if missing. Copying a complete `base_data` from an existing setup (e.g. the cluster) avoids most downloads.
+- **Base data.** Everything SEALS needs must be in `dirBaseData` or downloadable from the SEALS cloud bucket. This includes the MAgPIE-specific regressors referenced in `seals_global_coefficients.csv` (e.g. `gpm2.tif`, `magpie_SNV20_realloc.tif`, `magpie_SNV20_expan.tif`, and the protection layers such as `magpie_BH.tif`), since SEALS loads every listed regressor (contact vjeetze[at]pik-potsdam.de for any missing magpie specific regressors). The precomputed convolutions (`lulc/esa/seals7/convolutions/<year>/`) also come from the bucket if missing. Copying a complete `base_data` from an existing setup (e.g. the cluster) avoids most downloads.
 - **HTTPS interception.** Antivirus software or proxies that scan HTTPS traffic (e.g. Avast Web Shield) replace server certificates with their own root certificate. Python does not trust this root by default, so conda fails with `CERTIFICATE_VERIFY_FAILED` and SEALS downloads from the bucket hang without an error message. Either exclude Python from HTTPS scanning, make Python use the Windows certificate store, or provide the required base data locally. If conda or mamba downloads time out, longer timeouts can help, e.g. `CONDA_REMOTE_CONNECT_TIMEOUT_SECS=60` and `CONDA_REMOTE_READ_TIMEOUT_SECS=120`.
 - **Resources.** A global allocation needs a large share of a desktop machine's memory and CPU. Avoid other heavy processes while SEALS runs; the lock file only serialises the SEALS allocations themselves.
 - **Log file on Windows.** The log file stays locked while SEALS runs and can only be opened after the run has finished.
