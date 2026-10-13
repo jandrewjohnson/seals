@@ -197,3 +197,34 @@ def test_reconciliation_is_reused_when_nothing_moved(tmp_path):
     stamp = (table.stat().st_mtime_ns, table.stat().st_ino)
     tasks.allocation_reconciliation(p)
     assert (table.stat().st_mtime_ns, table.stat().st_ino) == stamp
+
+
+def test_record_stitched_leaves_an_identical_record_alone(tmp_path):
+    """Rewriting an identical provenance record is work repeated on resume.
+
+    record_stitched runs for every stitched map on every run, including maps the resume reused, so
+    it replaced each .allocation.json atomically -- a new inode -- for no change. That both repeats
+    work and makes an unchanged-resume check impossible to satisfy: six stitched records were
+    rewritten on a resume that had reused all six maps.
+    """
+    from seals.allocation_provenance import record_stitched
+    mosaic = raster(tmp_path / 'stitched.tif', np.full((4, 4), 2, dtype='uint8'))
+    tiles = {'tile_a': 'a' * 64}
+    baseline = {'base.tif': 'b' * 64}
+    record_stitched(mosaic, tiles, baseline)
+    audit = Path(mosaic).with_suffix('.allocation.json')
+    stamp = (audit.stat().st_mtime_ns, audit.stat().st_ino)
+    record_stitched(mosaic, tiles, baseline)
+    assert (audit.stat().st_mtime_ns, audit.stat().st_ino) == stamp, 'an identical record was rewritten'
+
+
+def test_record_stitched_rewrites_when_the_accepted_tiles_change(tmp_path):
+    """The other half: a genuinely different record must be written."""
+    from seals.allocation_provenance import record_stitched
+    mosaic = raster(tmp_path / 'stitched.tif', np.full((4, 4), 2, dtype='uint8'))
+    record_stitched(mosaic, {'tile_a': 'a' * 64}, {'base.tif': 'b' * 64})
+    audit = Path(mosaic).with_suffix('.allocation.json')
+    stamp = (audit.stat().st_mtime_ns, audit.stat().st_ino)
+    record_stitched(mosaic, {'tile_a': 'c' * 64}, {'base.tif': 'b' * 64})
+    assert (audit.stat().st_mtime_ns, audit.stat().st_ino) != stamp
+    assert json.loads(audit.read_text())['tiles'] == {'tile_a': 'c' * 64}

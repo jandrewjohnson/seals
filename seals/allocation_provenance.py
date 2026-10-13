@@ -49,6 +49,18 @@ def record_stitched(path, tiles, baseline):
     if not path.is_file():
         raise RuntimeError(f'Stitch did not produce a map: {path}')
     audit_path = path.with_suffix('.allocation.json')
+    record = dict(tiles=tiles, baseline=baseline, sha256=hb.hash_file_path(str(path)))
+    # This is called for every stitched map on every run, including maps the resume reused. Writing
+    # an identical record replaces the file -- atomically, so with a new inode -- for no change,
+    # which is work repeated on resume and makes an unchanged-resume check impossible to satisfy.
+    # check_stitched_resume has already refused a record that disagrees, so one that equals this is
+    # current and must be left alone.
+    if audit_path.is_file():
+        try:
+            if json.loads(audit_path.read_text()) == record:
+                return
+        except (ValueError, OSError):
+            pass
     temporary = audit_path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(dict(tiles=tiles, baseline=baseline, sha256=hb.hash_file_path(str(path))), indent=2))
+    temporary.write_text(json.dumps(record, indent=2))
     temporary.replace(audit_path)
