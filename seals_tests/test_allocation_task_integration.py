@@ -141,7 +141,7 @@ def test_resume_rewrites_no_accepted_tile_artifact(tmp_path):
     run_tile_tasks(p)
     root = Path(p.cur_dir_parent_dir)
     artifacts = sorted(q for q in root.iterdir() if q.is_file())
-    assert [q.name for q in artifacts].count('reconciliation.csv') == 1, [q.name for q in artifacts]
+    assert [q.name for q in artifacts].count('tile_record.json') == 1, [q.name for q in artifacts]
     before = {q.name: (q.stat().st_mtime_ns, q.stat().st_ino) for q in artifacts}
     run_tile_tasks(p)
     after = {q.name: (q.stat().st_mtime_ns, q.stat().st_ino) for q in artifacts}
@@ -150,10 +150,10 @@ def test_resume_rewrites_no_accepted_tile_artifact(tmp_path):
 
 
 def _tamper(path, mutate):
-    """Rewrite a JSON artifact in place, returning the original text so it can be restored."""
+    """Rewrite the accepted SECTION of a tile record, returning the original text to restore."""
     original = path.read_text()
     record = json.loads(original)
-    mutate(record)
+    mutate(record['accepted'])
     path.write_text(json.dumps(record, indent=2))
     return original
 
@@ -170,8 +170,8 @@ def test_reconciliation_is_rebuilt_when_the_inputs_it_depends_on_moved_on(tmp_pa
     configure_year(p, tmp_path, 2030, 2023)
     run_tile_tasks(p)
     root = Path(p.cur_dir_parent_dir)
-    table = root / 'reconciliation.csv'
-    accepted = root / 'accepted.json'
+    table = root / 'tile_record.json'
+    accepted = table
 
     for field, mutate in [
         ('input_signature', lambda r: r.__setitem__('input_signature', 'not-the-current-inputs')),
@@ -193,7 +193,7 @@ def test_reconciliation_is_reused_when_nothing_moved(tmp_path):
     p = project(tmp_path)
     configure_year(p, tmp_path, 2030, 2023)
     run_tile_tasks(p)
-    table = Path(p.cur_dir_parent_dir) / 'reconciliation.csv'
+    table = Path(p.cur_dir_parent_dir) / 'tile_record.json'
     stamp = (table.stat().st_mtime_ns, table.stat().st_ino)
     tasks.allocation_reconciliation(p)
     assert (table.stat().st_mtime_ns, table.stat().st_ino) == stamp
@@ -228,3 +228,96 @@ def test_record_stitched_rewrites_when_the_accepted_tiles_change(tmp_path):
     record_stitched(mosaic, {'tile_a': 'c' * 64}, {'base.tif': 'b' * 64})
     assert (audit.stat().st_mtime_ns, audit.stat().st_ino) != stamp
     assert json.loads(audit.read_text())['tiles'] == {'tile_a': 'c' * 64}
+
+
+# ---- consolidated tile record: every section's absence and tampering must be refused ----
+
+def _record(root):
+    return json.loads((Path(root) / 'tile_record.json').read_text())
+
+
+def _write_record(root, record):
+    (Path(root) / 'tile_record.json').write_text(json.dumps(record, indent=2))
+
+
+def test_the_consolidated_tile_costs_four_inodes(tmp_path):
+    """The reason for the change: five metadata files became one section-bearing record."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = Path(p.cur_dir_parent_dir)
+    files = sorted(q.name for q in root.iterdir() if q.is_file())
+    assert files == ['cumulative_change_happened.tif',
+                     'lulc_esa_seals7_ssp2_rcp26_magpie_net_zero_2030.tif',
+                     'tile_record.json'], files
+    assert len(list(root.rglob('*'))) == 3
+
+
+def test_every_audit_field_survives_the_merge(tmp_path):
+    """No audit information may be lost: each section and each accepted field must still be there."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    record = _record(p.cur_dir_parent_dir)
+    assert set(record) == {'budget', 'coefficients', 'candidate', 'reconciliation', 'accepted'}
+    accepted = record['accepted']
+    for field in ('status', 'mode', 'input_signature', 'cells', 'outputs',
+                  'budget_sha256', 'reconciliation_sha256', 'predecessor'):
+        assert field in accepted, field
+    assert accepted['status'] == 'accepted' and accepted['mode'] == 'cell_residual_strict'
+    assert record['coefficients'], 'the calibration the targets came from must be kept'
+    assert record['reconciliation'], 'the reconciliation rows must be kept'
+
+
+@pytest.mark.parametrize('section', ['budget', 'candidate', 'reconciliation'])
+def test_a_missing_section_is_refused_not_defaulted(tmp_path, section):
+    """Absence must raise. A defaulted empty section would let the audit accept an unbuilt tile."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = p.cur_dir_parent_dir
+    record = _record(root)
+    del record[section]
+    del record['accepted']          # force the audit to re-derive rather than short-circuit
+    _write_record(root, record)
+    with pytest.raises(RuntimeError, match='no .* section|provenance differs'):
+        tasks.allocation_audit(p)
+
+
+def test_a_tampered_budget_section_breaks_the_audit_hash(tmp_path):
+    """budget_sha256 is now a hash of the SECTION, so editing the section must be caught."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = p.cur_dir_parent_dir
+    record = _record(root)
+    record['budget']['targets'][0][0][0] = 999.0
+    del record['accepted']
+    _write_record(root, record)
+    with pytest.raises(RuntimeError, match='provenance differs'):
+        tasks.allocation_audit(p)
+
+
+def test_a_tampered_reconciliation_section_is_caught_by_the_accepted_hash(tmp_path):
+    """The accepted record pins the reconciliation section; editing it must not pass unnoticed."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = p.cur_dir_parent_dir
+    record = _record(root)
+    stored = record['accepted']['reconciliation_sha256']
+    record['reconciliation'][0]['realised_ha'] = -12345.0
+    _write_record(root, record)
+    assert tasks.section_sha256(_record(root)['reconciliation']) != stored
+    # The reconciliation task must refuse to reuse a table whose hash no longer matches the audit.
+    tasks.allocation_reconciliation(p)
+    assert tasks.section_sha256(_record(root)['reconciliation']) == stored, \
+        'the tampered table was neither rebuilt nor refused'
+
+
+def test_section_hash_is_order_independent():
+    """Canonical JSON: the same content must hash the same whatever the key order."""
+    a = {'x': 1, 'y': [1, 2], 'z': {'b': 2, 'a': 1}}
+    b = {'z': {'a': 1, 'b': 2}, 'y': [1, 2], 'x': 1}
+    assert tasks.section_sha256(a) == tasks.section_sha256(b)
+    assert tasks.section_sha256(a) != tasks.section_sha256({'x': 2, 'y': [1, 2], 'z': {}})

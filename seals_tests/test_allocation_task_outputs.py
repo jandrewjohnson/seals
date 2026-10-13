@@ -19,18 +19,18 @@ def test_failure_evidence_is_owned_by_audit_and_replayable(tmp_path,monkeypatch)
         run_tile_tasks(p)
     root=Path(p.cur_dir_parent_dir)
     assert not (root/tasks.map_name(p)).exists()
-    assert not (root/'accepted.json').exists()
+    assert 'accepted' not in json.loads((root/'tile_record.json').read_text())
     assert json.loads((root/'failure.json').read_text())['status']=='failed'
     with np.load(root/'failed_cell.npz') as saved:
         assert saved['before'].shape==(10,10)
         assert np.array_equal(saved['target'],[0,20,0,0,-20])
-    assert (root/'budgets.json').exists()
+    assert 'budget' in json.loads((root/'tile_record.json').read_text())
 
 
 def test_changed_budget_cannot_be_consumed(tmp_path):
     p=project(tmp_path);configure_year(p,tmp_path,2030,2023);run_tile_tasks(p)
-    root=Path(p.cur_dir_parent_dir);path=root/'budgets.json'
-    data=json.loads(path.read_text());data['targets'][1][0][0]=21;path.write_text(json.dumps(data))
+    root=Path(p.cur_dir_parent_dir);path=root/'tile_record.json'
+    data=json.loads(path.read_text());data['budget']['targets'][1][0][0]=21;path.write_text(json.dumps(data))
     p.cur_dir=str(root)
     with pytest.raises(RuntimeError,match='provenance differs'):tasks.allocation(p)
 

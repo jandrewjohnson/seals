@@ -17,6 +17,54 @@ def map_name(p, year=None):
     return f'lulc_{p.lulc_src_label}_{p.lulc_simplification_label}_{p.exogenous_label}_{p.climate_label}_{p.model_label}_{p.counterfactual_label}_{p.year if year is None else year}.tif'
 
 
+TILE_RECORD = 'tile_record.json'
+
+
+def section_sha256(section):
+    """Hash a record section the way a separate file used to be hashed.
+
+    The audit recorded budget_sha256 and reconciliation_sha256 over FILES. With the five metadata
+    files merged into one record there is no separate file to hash, so the same guarantee is kept
+    over the section's canonical JSON: same content, same digest, independent of key order.
+    """
+    return hashlib.sha256(json.dumps(section, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def read_tile_record(root):
+    """The tile's one metadata file, or an empty record when it does not exist yet."""
+    path = Path(root)/TILE_RECORD
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text())
+
+
+def require_section(root, name):
+    """A section a later task depends on. Absence is a fault, never a default.
+
+    Returning an empty section here would let allocation run without a budget, or the audit accept
+    a tile whose candidate was never written.
+    """
+    record = read_tile_record(root)
+    if name not in record:
+        raise RuntimeError('Tile record %s has no %r section: %s' % (TILE_RECORD, name, Path(root)/TILE_RECORD))
+    return record[name]
+
+
+def write_tile_section(root, name, section):
+    """Merge one section into the tile record, atomically, leaving the others untouched.
+
+    Tasks within a tile run in sequence so there is no contention, and tiles write different files
+    so parallel tiles are unaffected -- the same concurrency the five separate files had.
+    """
+    path = Path(root)/TILE_RECORD
+    record = read_tile_record(root)
+    record[name] = section
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(record, indent=2, sort_keys=True))
+    tmp.replace(path)
+    return record
+
+
 def _block_offsets(block_list):
     """A block list as integers, whichever path produced it.
 
@@ -97,8 +145,8 @@ def read_inputs(p):
         if not footprint.is_file():raise RuntimeError(f'Missing predecessor footprint: {footprint}')
         blocks=np.loadtxt(footprint,delimiter=',',dtype=int,ndmin=2)
         if root.name not in {f'{r[0]}_{r[1]}' for r in blocks}:continue
-        audit_path=prior/'accepted.json'
-        audit=json.loads(audit_path.read_text())
+        audit_path=prior/TILE_RECORD
+        audit=json.loads(audit_path.read_text()).get('accepted',{})
         if audit['status']!='accepted':raise RuntimeError('Unaccepted predecessor')
         for name,digest in audit['outputs'].items():
             if hb.hash_file_path(str(prior/name))!=digest:raise RuntimeError('Predecessor output differs from acceptance')
@@ -132,17 +180,19 @@ def zone_change_budgets(p):
     data=read_inputs(p)
     p._cell_allocation_inputs=(str(Path(p.cur_dir_parent_dir)),data)
     root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
-    out=root/'budgets.json'
     targets,rows=signed.budget_grid(**data['arrays'])
-    if out.exists():
-        prior=json.loads(out.read_text())
+    existing=read_tile_record(root)
+    if 'budget' in existing:
+        prior=existing['budget']
         if prior['input_signature']!=data['signature'] or prior['targets']!=targets.tolist() or prior['cells']!=rows:
             raise RuntimeError('Budget provenance differs; use a fresh run directory')
         return
-    data['coefficients'].to_csv(root/'coefficients.csv',index=False)
-    record=dict(input_signature=data['signature'],targets=targets.tolist(),cells=rows,
+    budget=dict(input_signature=data['signature'],targets=targets.tolist(),cells=rows,
                 predecessor=data['predecessor'],source_paths=data['source_paths'])
-    tmp=out.with_suffix('.tmp');tmp.write_text(json.dumps(record,indent=2));tmp.replace(out)
+    # The coefficients table travels in the record rather than a sibling CSV. It is the calibration
+    # the targets were computed from, so losing it would make the budget unreproducible.
+    write_tile_section(root,'coefficients',data['coefficients'].to_dict(orient='records'))
+    write_tile_section(root,'budget',budget)
 
 
 def allocation(p):
@@ -153,13 +203,13 @@ def allocation(p):
     """
     if not p.run_this:return
     data=checked_inputs(p);root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
-    budget_path=root/'budgets.json'
-    budget=json.loads(budget_path.read_text())
+    budget=require_section(root,'budget')
     if budget['input_signature']!=data['signature']:raise RuntimeError('Budget provenance differs')
-    candidate=root/'candidate.json';outputs=[root/map_name(p),root/'cumulative_change_happened.tif']
-    if candidate.exists():
-        record=json.loads(candidate.read_text())
-        if record['input_signature']!=data['signature'] or record['budget_sha256']!=hb.hash_file_path(str(budget_path)) or any(not q.is_file() or hb.hash_file_path(str(q))!=record['outputs'].get(q.name) for q in outputs):
+    outputs=[root/map_name(p),root/'cumulative_change_happened.tif']
+    existing=read_tile_record(root)
+    if 'candidate' in existing:
+        record=existing['candidate']
+        if record['input_signature']!=data['signature'] or record['budget_sha256']!=section_sha256(budget) or any(not q.is_file() or hb.hash_file_path(str(q))!=record['outputs'].get(q.name) for q in outputs):
             raise RuntimeError('Candidate provenance differs; refusing reuse')
         p._cell_allocation_failure=None
         return
@@ -194,9 +244,9 @@ def allocation(p):
             raise RuntimeError('%s geotransform %s differs from the tile geotransform %s, so its '
                                'pixels do not sit where the allocation placed them.'
                                %(path,tuple(written['geotransform']),tuple(data['geotransform'])))
-    record=dict(status='candidate',input_signature=data['signature'],budget_sha256=hb.hash_file_path(str(budget_path)),
-                cells=pixels,outputs={q.name:hb.hash_file_path(str(q)) for q in outputs})
-    tmp=candidate.with_suffix('.tmp');tmp.write_text(json.dumps(record,indent=2));tmp.replace(candidate)
+    record=dict(status='candidate',input_signature=data['signature'],budget_sha256=section_sha256(budget),
+        outputs={q.name:hb.hash_file_path(str(q)) for q in outputs})
+    write_tile_section(root,'candidate',record)
 
 
 def allocation_reconciliation(p):
@@ -206,9 +256,7 @@ def allocation_reconciliation(p):
     if failure and failure[0]==str(Path(p.cur_dir_parent_dir)):return
     data=checked_inputs(p)
     root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
-    out=root/'reconciliation.csv'
-    accepted=root/'accepted.json'
-    budget_path=root/'budgets.json'
+    existing=read_tile_record(root)
     # Rewriting this on every resume reproduced a file the audit had already accepted: 1,158
     # rewrites in the bounded fixture, 435,942 at global scale. Reuse requires the table to be
     # CURRENT, not merely the one some past audit accepted, so every input the table depends on is
@@ -217,19 +265,19 @@ def allocation_reconciliation(p):
     # would also accept a table whose upstream has since moved on. Checked against the audit's
     # existing records rather than a new sidecar, because a per-tile sidecar costs an inode per
     # tile and the surrounding work exists to spend fewer.
-    if out.exists() and accepted.exists() and budget_path.exists():
-        prior=json.loads(accepted.read_text())
+    if 'reconciliation' in existing and 'accepted' in existing and 'budget' in existing:
+        prior=existing['accepted']
         outputs=prior.get('outputs',{}) or {}
         if (prior.get('status')=='accepted'
                 and prior.get('input_signature')==data['signature']
-                and prior.get('budget_sha256')==hb.hash_file_path(str(budget_path))
+                and prior.get('budget_sha256')==section_sha256(existing['budget'])
                 and outputs
                 and all(hb.path_exists(str(root/name))
                         and hb.hash_file_path(str(root/name))==digest
                         for name,digest in outputs.items())
-                and prior.get('reconciliation_sha256')==hb.hash_file_path(str(out))):
+                and prior.get('reconciliation_sha256')==section_sha256(existing['reconciliation'])):
             return
-    budget=json.loads(budget_path.read_text())
+    budget=require_section(root,'budget')
     after=hb.as_array(str(root/map_name(p)))
     rows=[]
     windows={(r,c):w for r,c,w in signed.cell_windows(data['arrays']['requests'],data['arrays']['before'])}
@@ -242,7 +290,7 @@ def allocation_reconciliation(p):
             rows.append(dict(coarse_row=cr,coarse_col=cc,class_label=label,original_ha=b['original_ha'][i],
                 constrained_ha=b['target_ha'][i],realised_ha=actual,eligible_stock_ha=b['eligible_stock_ha'][i],
                 residual_ha=actual-b['target_ha'][i],expansion_factor=b['expansion_factor']))
-    pd.DataFrame(rows).to_csv(out,index=False)
+    write_tile_section(root,'reconciliation',rows)
 
 
 def allocation_audit(p):
@@ -255,9 +303,9 @@ def allocation_audit(p):
         np.savez_compressed(root/'failed_cell.npz',**error.inputs)
         (root/'failure.json').write_text(json.dumps(dict(status='failed',cell=error.cell,error=str(error),input_signature=data['signature']),indent=2))
         raise RuntimeError(f'Allocation audit failed; exact inputs: {root}/failed_cell.npz') from error
-    budget_path=root/'budgets.json';budget=json.loads(budget_path.read_text())
-    candidate_path=root/'candidate.json';candidate=json.loads(candidate_path.read_text())
-    if candidate['input_signature']!=data['signature'] or budget['input_signature']!=data['signature'] or candidate['budget_sha256']!=hb.hash_file_path(str(budget_path)):
+    budget=require_section(root,'budget')
+    candidate=require_section(root,'candidate')
+    if candidate['input_signature']!=data['signature'] or budget['input_signature']!=data['signature'] or candidate['budget_sha256']!=section_sha256(budget):
         raise RuntimeError('Audit input provenance differs')
     for name,digest in candidate['outputs'].items():
         if hb.hash_file_path(str(root/name))!=digest:raise RuntimeError('Candidate output differs')
@@ -272,16 +320,15 @@ def allocation_audit(p):
     cumulative=hb.as_array(str(root/'cumulative_change_happened.tif'))
     if not np.array_equal(cumulative,np.maximum(data['cumulative'],after!=arrays['before'])):
         raise RuntimeError('Cumulative mask differs from actual changes')
-    reconciliation=root/'reconciliation.csv'
-    if not reconciliation.is_file():raise RuntimeError('Missing reconciliation task output')
-    out=root/'accepted.json'
+    reconciliation=require_section(root,'reconciliation')
     record=dict(status='accepted',mode='cell_residual_strict',input_signature=data['signature'],cells=rows,
-        outputs=candidate['outputs'],budget_sha256=hb.hash_file_path(str(budget_path)),
-        reconciliation_sha256=hb.hash_file_path(str(reconciliation)),predecessor=data['predecessor'])
-    if out.exists():
-        if json.loads(out.read_text())!=record:raise RuntimeError('Accepted audit differs; refusing overwrite')
+        outputs=candidate['outputs'],budget_sha256=section_sha256(budget),
+        reconciliation_sha256=section_sha256(reconciliation),predecessor=data['predecessor'])
+    prior=read_tile_record(root).get('accepted')
+    if prior is not None:
+        if prior!=record:raise RuntimeError('Accepted audit differs; refusing overwrite')
         return
-    tmp=out.with_suffix('.tmp');tmp.write_text(json.dumps(record,indent=2));tmp.replace(out)
+    write_tile_section(root,'accepted',record)
 
 
 def add_allocation_tasks(p, parent):

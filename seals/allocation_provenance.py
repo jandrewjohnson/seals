@@ -15,17 +15,25 @@ def validated_tiles(target_dir, filename):
     result = {}
     for block in blocks:
         tile = root / f'{block[0]}_{block[1]}'
-        audit_path = tile / 'accepted.json'
+        audit_path = tile / 'tile_record.json'
         if not audit_path.is_file():
             raise RuntimeError(f'Missing strict tile acceptance: {audit_path}')
-        audit = json.loads(audit_path.read_text())
+        audit = json.loads(audit_path.read_text()).get('accepted')
+        if audit is None:
+            raise RuntimeError(f'Tile record has no accepted section: {audit_path}')
         if audit.get('status') != 'accepted' or audit.get('mode') != 'cell_residual_strict':
             raise RuntimeError(f'Unaccepted allocation tile: {tile}')
         for name in (filename, 'cumulative_change_happened.tif'):
             path = tile / name
             if not path.is_file() or hb.hash_file_path(str(path)) != audit.get('outputs', {}).get(name):
                 raise RuntimeError(f'Allocation output differs from acceptance audit: {path}')
-        result[str(tile / filename)] = hb.hash_file_path(str(audit_path))
+        # Keyed on the ACCEPTED section's canonical hash, not the whole record. The record also
+        # carries the budget, coefficients and reconciliation, so hashing the file would make the
+        # stitched mosaic's provenance change whenever any of those moved, even though stitching
+        # depends only on what was accepted.
+        import hashlib
+        result[str(tile / filename)] = hashlib.sha256(
+            json.dumps(audit, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     if not result:
         raise RuntimeError('Strict stitching requires an explicit nonempty accepted footprint')
     return result
