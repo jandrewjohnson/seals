@@ -125,3 +125,25 @@ def test_stitch_refuses_missing_planned_tile(tmp_path):
     (root/'global_processing_blocks_list.csv').write_text('0,0,1,1\n1,0,1,1\n')
     with pytest.raises(RuntimeError,match='Missing strict tile acceptance'):
         validated_tiles(root.parent,'lulc_esa_seals7_ssp2_rcp26_magpie_net_zero_2030.tif')
+
+
+def test_resume_rewrites_no_accepted_tile_artifact(tmp_path):
+    """A resume must leave every accepted tile artifact alone, not just the lulc map.
+
+    allocation_reconciliation wrote reconciliation.csv unconditionally, so every resume re-read
+    the tile's inputs and rasters to reproduce a file the audit had already accepted: 1,158
+    rewrites in the bounded fixture, 435,942 at global scale. Measured by mtime AND inode, because
+    identical content cannot show the work was skipped -- a rewrite producing the same bytes
+    changes the mtime, and an atomic replace changes the inode.
+    """
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = Path(p.cur_dir_parent_dir)
+    artifacts = sorted(q for q in root.iterdir() if q.is_file())
+    assert [q.name for q in artifacts].count('reconciliation.csv') == 1, [q.name for q in artifacts]
+    before = {q.name: (q.stat().st_mtime_ns, q.stat().st_ino) for q in artifacts}
+    run_tile_tasks(p)
+    after = {q.name: (q.stat().st_mtime_ns, q.stat().st_ino) for q in artifacts}
+    rewritten = sorted(name for name in before if before[name] != after[name])
+    assert rewritten == [], f'resume rewrote {rewritten}'

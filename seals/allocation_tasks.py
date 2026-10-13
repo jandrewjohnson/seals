@@ -204,7 +204,20 @@ def allocation_reconciliation(p):
     if not p.run_this:return
     failure=getattr(p,'_cell_allocation_failure',None)
     if failure and failure[0]==str(Path(p.cur_dir_parent_dir)):return
-    data=checked_inputs(p);root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
+    root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
+    out=root/'reconciliation.csv'
+    accepted=root/'accepted.json'
+    # Rewriting this on every resume re-read every tile's inputs and rasters to reproduce a file
+    # that was already accepted: 1,158 rewrites in the bounded fixture, 435,942 at global scale.
+    # The audit records this file's sha256, so an accepted audit whose hash still matches proves
+    # the file on disk is the one that was accepted. Checked against existing artifacts rather
+    # than a new sidecar, because a per-tile sidecar is an inode per tile.
+    if out.exists() and accepted.exists():
+        prior=json.loads(accepted.read_text())
+        if (prior.get('status')=='accepted'
+                and prior.get('reconciliation_sha256')==hb.hash_file_path(str(out))):
+            return
+    data=checked_inputs(p)
     budget=json.loads((root/'budgets.json').read_text())
     after=hb.as_array(str(root/map_name(p)))
     rows=[]
@@ -218,7 +231,7 @@ def allocation_reconciliation(p):
             rows.append(dict(coarse_row=cr,coarse_col=cc,class_label=label,original_ha=b['original_ha'][i],
                 constrained_ha=b['target_ha'][i],realised_ha=actual,eligible_stock_ha=b['eligible_stock_ha'][i],
                 residual_ha=actual-b['target_ha'][i],expansion_factor=b['expansion_factor']))
-    pd.DataFrame(rows).to_csv(root/'reconciliation.csv',index=False)
+    pd.DataFrame(rows).to_csv(out,index=False)
 
 
 def allocation_audit(p):
