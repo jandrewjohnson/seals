@@ -204,21 +204,32 @@ def allocation_reconciliation(p):
     if not p.run_this:return
     failure=getattr(p,'_cell_allocation_failure',None)
     if failure and failure[0]==str(Path(p.cur_dir_parent_dir)):return
+    data=checked_inputs(p)
     root=Path(p.cur_dir);root.mkdir(parents=True,exist_ok=True)
     out=root/'reconciliation.csv'
     accepted=root/'accepted.json'
-    # Rewriting this on every resume re-read every tile's inputs and rasters to reproduce a file
-    # that was already accepted: 1,158 rewrites in the bounded fixture, 435,942 at global scale.
-    # The audit records this file's sha256, so an accepted audit whose hash still matches proves
-    # the file on disk is the one that was accepted. Checked against existing artifacts rather
-    # than a new sidecar, because a per-tile sidecar is an inode per tile.
-    if out.exists() and accepted.exists():
+    budget_path=root/'budgets.json'
+    # Rewriting this on every resume reproduced a file the audit had already accepted: 1,158
+    # rewrites in the bounded fixture, 435,942 at global scale. Reuse requires the table to be
+    # CURRENT, not merely the one some past audit accepted, so every input the table depends on is
+    # checked against that audit: the signature of the inputs as they are NOW, the budget it was
+    # balanced from, the maps it measured, and the table itself. A hash match on the table alone
+    # would also accept a table whose upstream has since moved on. Checked against the audit's
+    # existing records rather than a new sidecar, because a per-tile sidecar costs an inode per
+    # tile and the surrounding work exists to spend fewer.
+    if out.exists() and accepted.exists() and budget_path.exists():
         prior=json.loads(accepted.read_text())
+        outputs=prior.get('outputs',{}) or {}
         if (prior.get('status')=='accepted'
+                and prior.get('input_signature')==data['signature']
+                and prior.get('budget_sha256')==hb.hash_file_path(str(budget_path))
+                and outputs
+                and all(hb.path_exists(str(root/name))
+                        and hb.hash_file_path(str(root/name))==digest
+                        for name,digest in outputs.items())
                 and prior.get('reconciliation_sha256')==hb.hash_file_path(str(out))):
             return
-    data=checked_inputs(p)
-    budget=json.loads((root/'budgets.json').read_text())
+    budget=json.loads(budget_path.read_text())
     after=hb.as_array(str(root/map_name(p)))
     rows=[]
     windows={(r,c):w for r,c,w in signed.cell_windows(data['arrays']['requests'],data['arrays']['before'])}

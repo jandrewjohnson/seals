@@ -147,3 +147,53 @@ def test_resume_rewrites_no_accepted_tile_artifact(tmp_path):
     after = {q.name: (q.stat().st_mtime_ns, q.stat().st_ino) for q in artifacts}
     rewritten = sorted(name for name in before if before[name] != after[name])
     assert rewritten == [], f'resume rewrote {rewritten}'
+
+
+def _tamper(path, mutate):
+    """Rewrite a JSON artifact in place, returning the original text so it can be restored."""
+    original = path.read_text()
+    record = json.loads(original)
+    mutate(record)
+    path.write_text(json.dumps(record, indent=2))
+    return original
+
+
+def test_reconciliation_is_rebuilt_when_the_inputs_it_depends_on_moved_on(tmp_path):
+    """Reuse must require the table to be CURRENT, not merely once-accepted.
+
+    A hash match on reconciliation.csv alone would also accept a table whose upstream has since
+    changed, so each of the audit's records is checked: the signature of the inputs as they are
+    now, the budget the table was balanced from, and the maps it measured. Each is tampered with
+    in turn and the table must be rebuilt every time.
+    """
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    root = Path(p.cur_dir_parent_dir)
+    table = root / 'reconciliation.csv'
+    accepted = root / 'accepted.json'
+
+    for field, mutate in [
+        ('input_signature', lambda r: r.__setitem__('input_signature', 'not-the-current-inputs')),
+        ('budget_sha256', lambda r: r.__setitem__('budget_sha256', '0' * 64)),
+        ('outputs', lambda r: r.__setitem__('outputs', {k: '0' * 64 for k in r['outputs']})),
+    ]:
+        original = _tamper(accepted, mutate)
+        stamp = (table.stat().st_mtime_ns, table.stat().st_ino)
+        tasks.allocation_reconciliation(p)
+        assert (table.stat().st_mtime_ns, table.stat().st_ino) != stamp, \
+            f'reuse survived a changed {field}; a stale table would be kept'
+        accepted.write_text(original)
+        # Re-accept so the next iteration starts from a consistent tile again.
+        tasks.allocation_audit(p)
+
+
+def test_reconciliation_is_reused_when_nothing_moved(tmp_path):
+    """The other half: with every record still matching, the table is left alone."""
+    p = project(tmp_path)
+    configure_year(p, tmp_path, 2030, 2023)
+    run_tile_tasks(p)
+    table = Path(p.cur_dir_parent_dir) / 'reconciliation.csv'
+    stamp = (table.stat().st_mtime_ns, table.stat().st_ino)
+    tasks.allocation_reconciliation(p)
+    assert (table.stat().st_mtime_ns, table.stat().st_ino) == stamp
