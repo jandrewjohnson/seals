@@ -43,3 +43,30 @@ def test_stitch_task_lists_tiles_only_when_the_map_is_missing():
     assertion = src.index('assert_non_changing_classes_unchanged(')
     recorded = src.index('record_stitched_map_checked(')
     assert check < assertion < recorded
+
+
+def test_each_map_is_recorded_before_the_next_year_begins():
+    """An interrupted stitch must not leave a finished map without its provenance record.
+
+    Writing the records only after the whole scenario-year loop left every finished map unrecorded
+    for the rest of the run. All three bounded runs on 14 Oct 2026 failed that way -- not from a
+    node failure but because the pipeline itself raised partway through the loop -- and each one
+    refused a map an earlier attempt had left unrecorded, on a different year.
+
+    The record is therefore written twice and both are required. Once inside the loop, so a map is
+    never on disk without one; and once after the POG conversion, which rewrites the maps in place,
+    so the stored hash describes the bytes finally there. record_stitched leaves an identical
+    record alone, so the second pass only rewrites what the conversion changed.
+
+    The conversion stays 16-wide. Serialising it to collapse the two writes into one would cost
+    hours on 27 global maps; a crash inside the conversion instead leaves a stale record, which
+    fails loudly as 'provenance differs' and is cleared by deleting that map.
+    """
+    src = inspect.getsource(seals_main.stitched_lulc_simplified_scenarios)
+    in_loop = src.index('record_stitched(p.lulc_projected_stitched_path')
+    cleanup = src.index('for file_path in vrt_paths_to_remove:')
+    convert = src.index('make_paths_pogs_in_parallel(')
+    refresh = src.index('for path, tiles, baseline in strict_stitched:')
+    assert in_loop < cleanup, 'the record is written after the year loop rather than inside it'
+    assert cleanup < convert < refresh, 'the records must be refreshed after the in-place conversion'
+    assert 'max_workers=16' in src, 'the conversion must stay parallel'

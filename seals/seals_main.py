@@ -2616,7 +2616,9 @@ def stitched_lulc_simplified_scenarios(p):
                         check_stitched_resume(p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance)
                         strict_stitched.append((p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance))
 
+                    newly_stitched = False
                     if not hb.path_exists(p.lulc_projected_stitched_path):
+                        newly_stitched = True
                         # Walking the allocation zones is minutes per map on a shared filesystem; it is
                         # only needed when there is something to stitch.
                         p.layers_to_stitch = hb.list_filtered_paths_recursively(target_dir, include_strings=include_string, include_extensions='.tif', depth=None)
@@ -2747,6 +2749,18 @@ def stitched_lulc_simplified_scenarios(p):
                             # hb.displace_file(clipped_path, p.lulc_projected_stitched_path, displaced_path=None, delete_original=True)
 
                             hb.timer('end clip')
+
+                    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' and newly_stitched:
+                        # Record this map now, before the next year starts. The records are also
+                        # written again after the POG conversion below, because that conversion
+                        # rewrites the maps in place and the stored hash has to describe the bytes
+                        # finally on disk. Writing them ONLY there left every finished map
+                        # unrecorded for the rest of the loop, and an error partway through -- which
+                        # is how all three bounded runs failed on 14 Oct 2026, not a node failure --
+                        # left maps the next run refused. The conversion stays 16-wide: a crash
+                        # inside it leaves a stale record, which fails loudly as 'provenance
+                        # differs' and is cleared by deleting that map, never silently accepted.
+                        record_stitched(p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance)
 
         for file_path in vrt_paths_to_remove:
             hb.remove_path(file_path)
