@@ -937,7 +937,16 @@ def coarse_extraction(p):
                         'time': p.years,
                     }
 
-                if not hb.path_exists(dst_dir):
+                # Re-extract when the parent dir is missing OR any requested year's subfolder is.
+                # The parent-dir-only check was brittle once the year set changed between runs: with
+                # time_2020/2030/2050 cached and 2040 newly requested, the directory existed so this
+                # task returned in 0.06 s having extracted nothing, and the downstream conversion
+                # then died on a missing time_2040/urban.tif. The same fix already exists in
+                # coarse_extraction_btc; this is the function the task tree actually registers.
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in filter_dict['time'])
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
             else:
                 if p.coarse_projections_input_path:
@@ -971,7 +980,16 @@ def coarse_extraction(p):
                         'time': key_base_years_as_list(p.key_base_year) + p.years,
                     }
 
-                if not hb.path_exists(dst_dir):
+                # Re-extract when the parent dir is missing OR any requested year's subfolder is.
+                # The parent-dir-only check was brittle once the year set changed between runs: with
+                # time_2020/2030/2050 cached and 2040 newly requested, the directory existed so this
+                # task returned in 0.06 s having extracted nothing, and the downstream conversion
+                # then died on a missing time_2040/urban.tif. The same fix already exists in
+                # coarse_extraction_btc; this is the function the task tree actually registers.
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in filter_dict['time'])
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
 
 
