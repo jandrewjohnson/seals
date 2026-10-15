@@ -213,7 +213,21 @@ def allocation(p):
             raise RuntimeError('Candidate provenance differs; refusing reuse')
         p._cell_allocation_failure=None
         return
-    if any(q.exists() for q in outputs):raise RuntimeError('Orphaned candidate map; use a fresh run directory')
+    orphaned=[q for q in outputs if q.exists()]
+    if orphaned:
+        # A fresh run directory, which this used to advise, discards every accepted tile in the
+        # year -- 16,000 of them on a global run -- to recover one tile that was interrupted
+        # between writing its maps and recording them. Name the tile and the files instead: moving
+        # just these aside restores the tile to a state the normal path rebuilds, and the maps are
+        # kept as evidence rather than deleted because an unrecorded map may be truncated.
+        raise RuntimeError(
+            'Orphaned candidate map in %s: these maps exist but no candidate record does, so the '
+            'tile was interrupted between writing and recording them and they cannot be trusted.'
+            '\n  %s\n'
+            'Move these files aside (keep them; do not delete) and rerun. The tile keeps its '
+            'budget and will be reallocated through the normal path. Do NOT start a fresh run '
+            'directory for this -- it would discard every accepted tile in the year.'
+            % (root, '\n  '.join(q.name for q in orphaned)))
     arrays=data['arrays'];args={k:v for k,v in arrays.items() if k!='requests'}
     try:
         after,_,changed,pixels=signed.allocate_budget_grid(np.asarray(budget['targets']),**args)
