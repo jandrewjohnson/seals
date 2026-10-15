@@ -1657,6 +1657,24 @@ def assert_calibration_matches_processing_grid(coefficients_df, processing_block
     if coverage >= minimum_coverage:
         return coverage
 
+    uncovered = sorted(z for z in zone_ids if z + '_1_1' not in keys)
+    if minimum_coverage >= 1.0 and len(uncovered) < 0.02 * len(wanted):
+        # The extent test above already passed, so these are not keys from another grid: they are
+        # blocks this table never fitted. Allocating them without coefficients is not an option --
+        # the standard path's own fallback is disabled, so such a tile allocates NOTHING and its
+        # land-use demand disappears without any error. Name them; the remedy is to fill them.
+        raise NameError(
+            'The trained coefficients do not cover every tile this run will allocate.\n'
+            '  coefficients: %s\n'
+            '  %d of %d scheduled zones (%.4f%%) have no calibration key\n'
+            '  uncovered zones: %s\n'
+            'Their block indices lie inside this run\'s grid, so this is not a resolution\n'
+            'mismatch -- the table was never fitted for them. A zone with no coefficients\n'
+            'allocates nothing and drops its land-use demand silently, so fill these blocks\n'
+            '(nearest fitted block, recorded in a provenance manifest) and point\n'
+            'calibration_parameters_source at the filled table.'
+            % (coefficients_path, len(uncovered), len(wanted), 100 * (1 - coverage), uncovered))
+
     raise NameError(
         'The trained coefficients were fitted on a different processing grid than this run.\n'
         '  coefficients: %s\n'
