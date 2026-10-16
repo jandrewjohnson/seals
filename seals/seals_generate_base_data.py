@@ -229,6 +229,13 @@ def lulc_clip_quick(p):
 def lulc_simplifications(p):
     # Simplify the LULC
 
+    # Provenance status of the base_data copy of lulc/<src>/<scheme>/, set from the baseline
+    # row of a global run and also used by lulc_binaries and lulc_convolutions.
+    p.lulc_layer_search_dirs = [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir]
+    p.lulc_layer_status = 'unknown'
+    p.lulc_layer_record = None
+    p.lulc_layers_built_from_source = False
+
     if p.run_this:
 
         p.base_data_lulc_simplified_paths = {}
@@ -260,9 +267,22 @@ def lulc_simplifications(p):
                                 hb.reclassify_raster_hb(p.lulc_src_paths[year], rules, output_raster_path=output_path, output_data_type=1, array_threshold=10000, match_path=p.lulc_src_paths[year], verbose=False)
 
                 else:
+                    # Built from the mapping used for the reclassification below.
+                    p.lulc_layer_record = seals_utils.lulc_layer_provenance(p.lulc_correspondence_dict['src_to_dst_reclassification_dict'])
+                    p.lulc_layer_status = seals_utils.lulc_layers_status(base_data_lulc_simplified_dir, p.lulc_layer_record)
+                    if p.lulc_layer_status == 'mismatch':
+                        p.lulc_layer_search_dirs = [p.fine_processed_inputs_dir, p.input_dir]
+                        hb.log('The lulc layers in ' + base_data_lulc_simplified_dir + ' were built from a different '
+                               'correspondence than ' + str(p.lulc_correspondence_path) + ', so they are rebuilt in '
+                               + p.fine_processed_inputs_dir + '.')
+                    elif p.lulc_layer_status == 'unknown':
+                        hb.log('WARNING: ' + base_data_lulc_simplified_dir + ' records no correspondence, so its lulc '
+                               'layers are used without a check. They may come from a different correspondence than '
+                               + str(p.lulc_correspondence_path) + '.')
+
                     for year in p.base_years:
                         search_path = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, simplified_filename_start + str(year) + '.tif')
-                        found_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
+                        found_path = hb.get_first_extant_path(search_path, p.lulc_layer_search_dirs)
                         p.base_data_lulc_simplified_paths[year] = found_path
                         p.aoi_lulc_simplified_paths[year] = found_path
                         p.lulc_simplified_paths[year] = found_path
@@ -273,6 +293,7 @@ def lulc_simplifications(p):
                             rules = p.lulc_correspondence_dict['src_to_dst_reclassification_dict']
                             output_path = p.aoi_lulc_simplified_paths[year]
                             hb.reclassify_raster_hb(p.lulc_src_paths[year], rules, output_raster_path=output_path, output_data_type=1, array_threshold=10000, match_path=p.lulc_src_paths[year], verbose=False)
+                            p.lulc_layers_built_from_source = True
 
 
 
@@ -327,7 +348,7 @@ def lulc_binaries(p):
 
 
                             search_path = os.path.join('lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year), binary_filename_start + str(year) + '_' + class_label +  '.tif')
-                            found_path = hb.get_first_extant_path(search_path, [p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir])
+                            found_path = hb.get_first_extant_path(search_path, p.lulc_layer_search_dirs)
                             p.base_data_binary_paths[year][class_label] = found_path
                             p.aoi_binary_paths[year][class_label] = found_path
                             p.binary_paths[year][class_label] = found_path
@@ -396,12 +417,15 @@ def lulc_convolutions(p):
                     # current_bulk_convolution_path = current_convolution_path.replace(hb.PRIMARY_DRIVE, hb.EXTERNAL_BULK_DATA_DRIVE)
                     # current_input_binary_path = os.path.join(p.base_data_dir, 'lulc', 'esa', p.lulc_simplification_label, 'binaries', str(label), 'lulc_esa_' + p.lulc_simplification_label + '_' + str(p.base_year) + '_class_' + str(class_id) + '_binary.tif')
                     current_file_root = 'binary_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label)
-                    current_input_binary_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, 'binaries', str(year), 'binary_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label)+'.tif')
                     # current_input_binary_path = p.lulc_simplified_binary_paths[current_file_root]
 
                     # First, define where the file should be created
                     current_convolution_ref_path = os.path.join('lulc', p.lulc_src_label,  p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
-                    current_convolution_path = p.get_path(current_convolution_ref_path, raise_error_if_fail=False, verbose=True)
+                    if p.lulc_layer_status == 'mismatch':
+                        # base_data was rejected for its mapping, and the bucket copy has no record.
+                        current_convolution_path = hb.get_first_extant_path(current_convolution_ref_path, p.lulc_layer_search_dirs)
+                    else:
+                        current_convolution_path = p.get_path(current_convolution_ref_path, raise_error_if_fail=False, verbose=True)
 
                     # TRICKY, the only way to get this to work without using the _get_first_extant as above was to have a second pass here if it didn't find one.
                     # INTERPRETATION, we are effectivly adding fine_processed_input_dir as a psuedo cannonical path                    
@@ -415,6 +439,9 @@ def lulc_convolutions(p):
                         
                         # A little awkward, but here i don't follow the full ref-path approach because in this project it is in a seals folder wrapper, but i don't really want to have that in the base data cause this lulc is not seals specific.
                         current_convolution_path = os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label, 'convolutions', str(year), 'convolution_'+p.lulc_src_label+'_'+p.lulc_simplification_label+'_'+str(year)+'_' + str(label) + '_gaussian_' + str(sigma) + '.tif')
+
+                        # The binary found by lulc_binaries, which is in base_data in most global runs.
+                        current_input_binary_path = {str(k): v for k, v in p.aoi_binary_paths.items()}[str(year)][label]
                         
                         hb.log(' Starting FFT Gaussian (in parallel) on ' + current_input_binary_path + 
                                ' and saving to ' + p.lulc_simplified_convolution_paths[current_convolution_name])
@@ -431,6 +458,15 @@ def lulc_convolutions(p):
                 del i
             worker_pool.close()
             worker_pool.join()
+
+        # Copy the layers this run computed to base_data for later projects. Clipped (non-global)
+        # layers and layers of a rejected mapping are not copied.
+        if p.run_this and p.promote_lulc_layers_to_base_data and p.aoi == 'global' and p.lulc_layer_status != 'mismatch':
+            promoted = seals_utils.promote_lulc_layers_to_base_data(
+                os.path.join(p.fine_processed_inputs_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label),
+                os.path.join(p.base_data_dir, 'lulc', p.lulc_src_label, p.lulc_simplification_label),
+                p.lulc_layer_record if p.lulc_layers_built_from_source else None)
+            hb.log('Promoted ' + str(len(promoted)) + ' lulc layers to base_data.')
 
 
 

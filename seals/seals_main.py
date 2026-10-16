@@ -1957,8 +1957,7 @@ def allocation_zones(p):
                                                  p.base_data_dir)
 
             df = seals_utils.resolve_constraint_layers(
-                df, p.fine_processed_inputs_dir, p.lulc_src_label,
-                p.lulc_simplification_label, p.key_base_year)
+                df, p.lulc_src_label, p.lulc_simplification_label, p.key_base_year)
 
             # TODO This is bad. Fix it.
             # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
