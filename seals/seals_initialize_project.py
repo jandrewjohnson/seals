@@ -70,6 +70,11 @@ def set_advanced_options(p):
     # TODOO Figure out how this relates to the coefficients csv. I could probably derive these values from that csv.
     p.gaussian_sigmas_to_test = [1, 5]
 
+    # Copy the lulc map, binaries and convolutions a global run computes to base_data, with a
+    # record of their correspondence. Off by default, because base_data is shared by all projects.
+    if not hasattr(p, 'promote_lulc_layers_to_base_data'):
+        p.promote_lulc_layers_to_base_data = False
+
     # There are still multiple ways to do the allocation. Unless we input a fully-defined
     # change matrix, there will always be ambiguities. One way of lessening them is to
     # switch from the default allocation method (just do positive allocation requests)

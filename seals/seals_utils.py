@@ -1955,8 +1955,7 @@ def apply_presence_constraints(coefficients_df, all_class_labels, changing_class
     return out
 
 
-def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_src_label,
-                              lulc_simplification_label, base_year):
+def resolve_constraint_layers(coefficients_df, lulc_src_label, lulc_simplification_label, base_year):
     """Point each presence constraint at this run's own layer for the year it allocates from.
 
     The constraint rows carry a path to a binary raster saying where the protected class is.
@@ -1970,9 +1969,10 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
 
     Rebuilding the path here rather than editing the stored one also makes a coefficient set
     portable: the same file can be allocated from any base year, and from any project.
-    """
-    import os
 
+    The path is relative, so the allocation resolves it in fine_processed_inputs or in
+    base_data, where global runs keep the binaries.
+    """
     out = coefficients_df.copy()
     rows = out['type'] == 'multiplicative'
     suffixes = ('_presence_constraint', '_constraint')
@@ -1982,11 +1982,9 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
         label = next((name[:-len(s)] for s in suffixes if name.endswith(s)), None)
         if label is None:
             continue
-        out.at[i, 'data_location'] = os.path.join(
-            fine_processed_inputs_dir, 'lulc', lulc_src_label, lulc_simplification_label,
-            'binaries', str(base_year),
-            'binary_%s_%s_%s_%s.tif' % (lulc_src_label, lulc_simplification_label,
-                                        base_year, label))
+        out.at[i, 'data_location'] = 'lulc/%s/%s/binaries/%s/binary_%s_%s_%s_%s.tif' % (
+            lulc_src_label, lulc_simplification_label, base_year,
+            lulc_src_label, lulc_simplification_label, base_year, label)
     return out
 
 
@@ -2233,3 +2231,55 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
     if dst_path:
         out.to_csv(dst_path, index=False)
     return out
+
+
+def lulc_layer_provenance(src_to_dst: dict) -> dict:
+    """Record of the class mapping a folder of simplified LULC layers was built from.
+
+    The layers are found by file name, which is the same for all correspondences of a scheme.
+    The record stores the mapping itself, so reformatting the correspondence CSV keeps it valid.
+    """
+    return {str(k): int(v) for k, v in src_to_dst.items()}
+
+
+def lulc_layers_status(scheme_dir: str, record: dict) -> str:
+    """'match' or 'mismatch' against the record in scheme_dir, 'unknown' if it has none."""
+    import json
+    from pathlib import Path
+
+    path = Path(scheme_dir) / 'provenance.json'
+    if not path.is_file():
+        return 'unknown'
+    return 'match' if json.loads(path.read_text()) == record else 'mismatch'
+
+
+def promote_lulc_layers_to_base_data(project_scheme_dir: str, base_data_scheme_dir: str,
+                                     record: dict | None = None) -> list[str]:
+    """Copy the layers in project_scheme_dir to the same relative paths in base_data.
+
+    Existing files are skipped, and each copy is atomic, so concurrent jobs leave complete files.
+    The record is written only if base_data had no layers of this scheme before.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    src_root = Path(project_scheme_dir)
+    dst_root = Path(base_data_scheme_dir)
+    if not src_root.is_dir():
+        return []
+
+    had_layers = dst_root.is_dir() and any(dst_root.rglob('*.tif'))
+    copied = []
+    for src in sorted(src_root.rglob('*.tif')):
+        dst = dst_root / src.relative_to(src_root)
+        if not dst.exists():
+            hb.cache_file_from_shared_root(str(src), str(dst))
+            copied.append(str(dst))
+
+    if record is not None and copied and not had_layers:
+        # Written through a temporary file, so concurrent readers see a complete record.
+        tmp = dst_root / ('provenance.json.partial.' + str(os.getpid()))
+        tmp.write_text(json.dumps(record, indent=1))
+        tmp.replace(dst_root / 'provenance.json')
+    return copied
