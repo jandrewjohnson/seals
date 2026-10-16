@@ -282,10 +282,15 @@ def regional_change(p):
                                     return (a * (b/c))
                                 hb.raster_calculator(input, op, covariate_multiply_shift_path, 7, -9999.)
                                 
-                                # This is the one i want to use so also save it as the template. Can choose from different algorithms above.
-                                alg_to_use_path = hb.suri(output_path_template, 'covariate_sum_shift')
+                                # Copy the configured variant to the unlabelled template name, which is what
+                                # the allocator reads. Defaults to covariate_sum_shift when the scenario does not
+                                # set region_to_coarse_algorithm, so an unconfigured run is unchanged.
+                                region_to_coarse_algorithm = getattr(p, 'region_to_coarse_algorithm', None) or 'covariate_sum_shift'
+                                if region_to_coarse_algorithm not in ('covariate_additive', 'covariate_sum_shift', 'covariate_multiply_shift'):
+                                    raise NameError('Unknown region_to_coarse_algorithm: ' + str(region_to_coarse_algorithm) + '. Must be one of covariate_additive, covariate_sum_shift, covariate_multiply_shift')
+                                alg_to_use_path = hb.suri(output_path_template, region_to_coarse_algorithm)
+                                hb.log('regional_change using ' + region_to_coarse_algorithm + ' for ' + os.path.basename(output_path_template))
                                 hb.path_copy(alg_to_use_path, output_path_template)
-                                5
                             # Given all of these, copy the one that we want to use to the name without a label
                         # 2019 2020 2021 2023 2025 2027 2029 2030 2031 2033 2035 2037 2039 2040 2041 2043 2045 2047 2049 2050             
                                 
