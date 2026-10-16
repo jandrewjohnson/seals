@@ -1955,8 +1955,7 @@ def apply_presence_constraints(coefficients_df, all_class_labels, changing_class
     return out
 
 
-def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_src_label,
-                              lulc_simplification_label, base_year):
+def resolve_constraint_layers(coefficients_df, lulc_src_label, lulc_simplification_label, base_year):
     """Point each presence constraint at this run's own layer for the year it allocates from.
 
     The constraint rows carry a path to a binary raster saying where the protected class is.
@@ -1970,9 +1969,10 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
 
     Rebuilding the path here rather than editing the stored one also makes a coefficient set
     portable: the same file can be allocated from any base year, and from any project.
-    """
-    import os
 
+    The path is relative, so the allocation resolves it in fine_processed_inputs or in
+    base_data, where global runs keep the binaries.
+    """
     out = coefficients_df.copy()
     rows = out['type'] == 'multiplicative'
     suffixes = ('_presence_constraint', '_constraint')
@@ -1982,11 +1982,9 @@ def resolve_constraint_layers(coefficients_df, fine_processed_inputs_dir, lulc_s
         label = next((name[:-len(s)] for s in suffixes if name.endswith(s)), None)
         if label is None:
             continue
-        out.at[i, 'data_location'] = os.path.join(
-            fine_processed_inputs_dir, 'lulc', lulc_src_label, lulc_simplification_label,
-            'binaries', str(base_year),
-            'binary_%s_%s_%s_%s.tif' % (lulc_src_label, lulc_simplification_label,
-                                        base_year, label))
+        out.at[i, 'data_location'] = 'lulc/%s/%s/binaries/%s/binary_%s_%s_%s_%s.tif' % (
+            lulc_src_label, lulc_simplification_label, base_year,
+            lulc_src_label, lulc_simplification_label, base_year, label)
     return out
 
 

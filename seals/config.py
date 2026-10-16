@@ -90,7 +90,6 @@ seals7_labels_to_ids_correspondence['barren'] = 7
 
 
 esa_to_seals7_correspondence = {}
-esa_to_seals7_correspondence[0] = [0, 'ndv', 'ndv']
 esa_to_seals7_correspondence[10] = [2, 'crop_rainfed', 'crop']
 esa_to_seals7_correspondence[11] = [2, 'crop_rainfed_herb', 'crop']
 esa_to_seals7_correspondence[12] = [2, 'crop_rainfed_tree', 'crop']
@@ -130,7 +129,6 @@ esa_to_seals7_correspondence[210] = [6, 'water_bodies', 'water']
 esa_to_seals7_correspondence[220] = [7, 'permanent_snow_and_ice', 'other']
 
 esa_to_seals20_correspondence = {}
-esa_to_seals20_correspondence[0] = [0, 'ndv', 'ndv']
 esa_to_seals20_correspondence[10] = [10, 'crop_rainfed', 'crop']
 esa_to_seals20_correspondence[11] = [11, 'crop_rainfed_herb', 'crop']
 esa_to_seals20_correspondence[12] = [12, 'crop_rainfed_tree', 'crop']
@@ -207,7 +205,6 @@ glc_fcs30d_class_labels[210] = ["210 Water body", "#0046c8"]
 glc_fcs30d_class_labels[220] = ["220 Permanent ice and snow", "#ffffff"]
 
 esa_to_seals7_mosaic_is_natural_correspondence = {}
-esa_to_seals7_mosaic_is_natural_correspondence[0] = [0, 'ndv', 'ndv']
 esa_to_seals7_mosaic_is_natural_correspondence[10] = [2, 'crop_rainfed', 'crop']
 esa_to_seals7_mosaic_is_natural_correspondence[11] = [2, 'crop_rainfed_herb', 'crop']
 esa_to_seals7_mosaic_is_natural_correspondence[12] = [2, 'crop_rainfed_tree', 'crop']
