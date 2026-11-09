@@ -34,6 +34,7 @@ sys.path.append(os.path.dirname(os.path.abspath(parent_dir)))
 
 
 from seals import seals_utils
+from seals.zone_change_budgets import strict_othernat_targets, audit_strict_allocation
 import pandas as pd
 import time
 import math
@@ -2172,6 +2173,12 @@ def allocation(passed_p=None):
 
         lulc_projected_path = os.path.join(p.cur_dir, 'lulc_' + p.lulc_src_label + '_'  + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
 
+        strict_othernat = getattr(p, 'strict_othernat_accounting', False)
+        if strict_othernat and os.path.exists(lulc_projected_path):
+            raise ValueError('Strict OtherNat accounting requires a fresh allocation output '
+                             'directory. Existing maps must not bypass the budget audit: '
+                             + lulc_projected_path)
+
         if p.skip_created_downscaling_zones:
             skip_this_zone = os.path.exists(lulc_projected_path)
         else:
@@ -2477,11 +2484,18 @@ def allocation(passed_p=None):
             #     previous_change_year_array = hb.as_array(previous_change_year_path)
 
             allow_contracting = np.int64(p.allow_contracting)
+            if strict_othernat:
+                reserve_index = list(p.changing_class_labels).index('othernat')
+                projected_coarse_change_3d, budget_records = strict_othernat_targets(
+                    projected_coarse_change_3d, lulc_baseline_array, hectares_per_grid_cell,
+                    valid_mask_array, changing_class_indices_array, reserve_index)
+                pd.DataFrame(budget_records).to_csv(
+                    os.path.join(p.cur_dir, 'othernat_budget.csv'), index=False)
             # Strange choice, but the allocation function both calibrates AND RUNS the final projection using the calibration. If instead you want to
             # Run on precalibrated parameters, you have to reload coarse_change_3d.
             overall_similarity_score, lulc_projected_array, overall_similarity_plot, class_similarity_scores, class_similarity_plots, output_change_arrays, change_happened = \
-                calibrate(projected_coarse_change_3d,
-                        lulc_baseline_array,
+                calibrate(projected_coarse_change_3d.copy() if strict_othernat else projected_coarse_change_3d,
+                        lulc_baseline_array.copy() if strict_othernat else lulc_baseline_array,
                         spatial_layers_3d,
                         generation_best_parameters,
                         spatial_layer_function_types_1d,
@@ -2496,6 +2510,13 @@ def allocation(passed_p=None):
                         p.loss_function_sigma,
                         output_match_path=tile_match_path,
                         call_string=p.call_string)
+
+            if strict_othernat:
+                audit_records = audit_strict_allocation(
+                    projected_coarse_change_3d, lulc_baseline_array, lulc_projected_array,
+                    hectares_per_grid_cell, valid_mask_array, changing_class_indices_array)
+                pd.DataFrame(audit_records).to_csv(
+                    os.path.join(p.cur_dir, 'othernat_allocation_audit.csv'), index=False)
 
             # LEARNING POINT: GDAL silently fails to write if you have a file path too long. This happened below. Fix by enabling long-filepaths in OS.
 
