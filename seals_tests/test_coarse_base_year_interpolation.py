@@ -60,9 +60,11 @@ def test_bracketing(coarse_tree, target, expected):
 def test_interpolated_values_use_the_right_weight(coarse_tree):
     """2023 sits 3/5 of the way from 2020 to 2025, so the weight is 0.6."""
     source_dir, earlier, later = coarse_tree
-    result,match = seals_utils.interpolate_coarse_state_at_year(
+    written = seals_utils.interpolate_coarse_state_at_year(
         source_dir, 2023, (2020, 2025), 'cropland_prop_{year}.tif')
 
+    assert len(written) == 1
+    result = hb.as_array(written[0])
     expected = earlier + 0.6 * (later - earlier)      # [[0, 16], [32, 60]]
     assert np.allclose(result, expected)
     # and it must lie between the brackets everywhere, which is the property that matters
@@ -70,12 +72,13 @@ def test_interpolated_values_use_the_right_weight(coarse_tree):
     assert np.all(result <= np.maximum(earlier, later) + 1e-9)
 
 
-def test_helper_writes_nothing(coarse_tree):
-    source_dir,_,_=coarse_tree
-    first,_=seals_utils.interpolate_coarse_state_at_year(source_dir,2023,(2020,2025),'cropland_prop_{year}.tif')
-    second,_=seals_utils.interpolate_coarse_state_at_year(source_dir,2023,(2020,2025),'cropland_prop_{year}.tif')
-    assert np.array_equal(first,second)
-    assert not os.path.exists(os.path.join(source_dir,'2023'))
+def test_rerun_does_not_rewrite(coarse_tree):
+    source_dir, _, _ = coarse_tree
+    first = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2025), 'cropland_prop_{year}.tif')
+    second = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2025), 'cropland_prop_{year}.tif')
+    assert len(first) == 1 and second == []
 
 
 def test_target_outside_the_brackets_raises(coarse_tree):
@@ -92,41 +95,102 @@ def test_missing_bracket_file_raises(coarse_tree, tmp_path):
             source_dir, 2023, (2020, 2025), 'pastureland_prop_{year}.tif')
 
 
-# Publication, common-reference routing and resume are tested through the task in
-# test_allocation_task_outputs.py. The numerical helper no longer writes files.
+def test_it_can_write_the_state_somewhere_other_than_beside_its_brackets(tmp_path):
+    """The reference trajectory's base-year state belongs in the baseline tree, under the baseline
+    naming, because that is the ONE common start every scenario's first difference reads."""
+    source_dir = str(tmp_path / 'ref')
+    for year, value in ((2020, 10.0), (2030, 20.0)):
+        write_raster(os.path.join(source_dir, str(year), 'cropland_prop_ssp2_rcp70_magpie_ref_%d.tif' % year),
+                     np.full((2, 2), value))
+    baseline_dir = str(tmp_path / 'baseline' / '2023')
+    written = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2030), 'cropland_prop_ssp2_rcp70_magpie_ref_{year}.tif',
+        dst_dir=baseline_dir, dst_filename_template='cropland_prop_ssp2_magpie_{year}.tif')
+    assert written == [os.path.join(baseline_dir, 'cropland_prop_ssp2_magpie_2023.tif')]
+    assert np.allclose(hb.as_array(written[0]), 13.0), 'linear at weight 0.3 between 10 and 20'
+    # and it did NOT write beside the brackets
+    assert not os.path.exists(os.path.join(source_dir, '2023'))
 
 
-def test_a_stale_output_is_replaced_without_ever_being_unlinked(tmp_path):
-    """Recomputing a stale interpolation must not destroy what was there first.
+def test_the_default_destination_is_unchanged(tmp_path):
+    source_dir = str(tmp_path / 'ref')
+    for year, value in ((2020, 10.0), (2030, 20.0)):
+        write_raster(os.path.join(source_dir, str(year), 'cropland_{year}.tif'.format(year=year)),
+                     np.full((2, 2), value))
+    written = seals_utils.interpolate_coarse_state_at_year(
+        source_dir, 2023, (2020, 2030), 'cropland_{year}.tif')
+    assert written == [os.path.join(source_dir, '2023', 'cropland_2023.tif')]
 
-    The first version of this fix called out.unlink() and manifest.unlink() before rebuilding, so
-    an interrupted recompute left a hole where an output used to be, and the record of what had
-    been produced was gone. Build beside the target and os.replace instead.
-    """
-    import json
-    import os
-    out = tmp_path / 'state.tif'
-    manifest = out.with_suffix('.json')
-    out.write_bytes(b'original raster bytes')
-    manifest.write_text(json.dumps(dict(signature={'implementation': ['old']}, output_sha256='old-digest')))
 
-    # The replacement, as the task performs it: stage, hash, replace, then rewrite the manifest.
-    staging = out.with_name(out.name + '.rebuilding')
-    staging.write_bytes(b'rebuilt raster bytes')
-    assert out.read_bytes() == b'original raster bytes', 'the original must survive staging'
-    previous = json.loads(manifest.read_text())
-    superseded = previous.get('superseded', []) + [
-        dict(signature=previous['signature'], output_sha256=previous['output_sha256'])]
-    os.replace(staging, out)
-    assert out.read_bytes() == b'rebuilt raster bytes'
-    assert not staging.exists(), 'no stray staging file is left behind'
+SCENARIO = dict(exogenous_label='ssp2', climate_label='rcp70', model_label='magpie',
+                counterfactual_label='baseline_ignore_dependencies')
+SCENARIO_DIR = os.path.join('ssp2', 'rcp70', 'magpie', 'baseline_ignore_dependencies')
+SCENARIO_TEMPLATE = 'forest_prop_ssp2_rcp70_magpie_baseline_ignore_dependencies_{year}.tif'
 
-    record = dict(signature={'implementation': ['new']}, output_sha256='new-digest', superseded=superseded)
-    manifest_staging = manifest.with_suffix('.json.tmp')
-    manifest_staging.write_text(json.dumps(record))
-    os.replace(manifest_staging, manifest)
 
-    written = json.loads(manifest.read_text())
-    assert written['superseded'][0]['output_sha256'] == 'old-digest', 'the prior version is recorded'
-    assert written['superseded'][0]['signature'] == {'implementation': ['old']}
-    assert not manifest.with_suffix('.json.tmp').exists()
+def interpolation_project(tmp_path, monkeypatch, states, key_base_year=2023,
+                          scenario_type='baseline_ignore_dependencies'):
+    """A project whose reference trajectory has coarse forest states at the given years."""
+    import pandas as pd
+    from types import SimpleNamespace
+    source_dir = str(tmp_path / 'coarse_simplified_proportion')
+    for year, value in states.items():
+        write_raster(os.path.join(source_dir, SCENARIO_DIR, str(year), SCENARIO_TEMPLATE.format(year=year)),
+                     np.full((2, 2), value))
+    rows = [dict(scenario_type='baseline', key_base_year=key_base_year, **SCENARIO),
+            dict(scenario_type=scenario_type, key_base_year=key_base_year, **SCENARIO)]
+    p = SimpleNamespace(run_this=True, cur_dir=str(tmp_path / 'coarse_interpolated_states'),
+                        coarse_interpolated_states_dir=str(tmp_path / 'coarse_interpolated_states'),
+                        coarse_simplified_proportion_dir=source_dir, coarse_correspondence_path='correspondence.csv',
+                        input_dir=str(tmp_path), base_data_dir=str(tmp_path), scenarios_df=pd.DataFrame(rows))
+    p.get_path = lambda path, **kwargs: path
+    monkeypatch.setattr(hb.utils, 'get_reclassification_dict_from_df', lambda *args: {'dst_labels': ['forest']})
+    return p
+
+
+def test_the_task_writes_the_scenario_state_and_the_common_reference_state(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    assert coarse.coarse_interpolated_states(p) is p
+
+    scenario_path = os.path.join(p.cur_dir, SCENARIO_DIR, '2023', SCENARIO_TEMPLATE.format(year=2023))
+    reference_path = os.path.join(p.cur_dir, 'ssp2', 'magpie', '2023', 'forest_prop_ssp2_magpie_2023.tif')
+    for path in (scenario_path, reference_path):
+        assert np.allclose(hb.as_array(path), 0.5), '0.2 + 0.6 * (0.7 - 0.2)'
+    assert not os.path.exists(os.path.join(p.coarse_simplified_proportion_dir, SCENARIO_DIR, '2023'))
+    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2023') == os.path.dirname(reference_path)
+    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2020') == os.path.join(
+        p.coarse_simplified_proportion_dir, 'ssp2', 'magpie', '2020')
+
+
+def test_the_task_reuses_existing_states(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    coarse.coarse_interpolated_states(p)
+    path = os.path.join(p.cur_dir, SCENARIO_DIR, '2023', SCENARIO_TEMPLATE.format(year=2023))
+    stamp = os.stat(path).st_mtime_ns
+    coarse.coarse_interpolated_states(p)
+    assert os.stat(path).st_mtime_ns == stamp
+
+
+def test_a_base_year_the_coarse_model_has_is_copied(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7}, key_base_year=2020)
+    coarse.coarse_interpolated_states(p)
+    path = os.path.join(p.cur_dir, SCENARIO_DIR, '2020', SCENARIO_TEMPLATE.format(year=2020))
+    assert np.allclose(hb.as_array(path), 0.2)
+
+
+def test_a_base_year_outside_the_coarse_years_raises(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7}, key_base_year=2030)
+    with pytest.raises(NameError, match='Cannot bracket the coarse base year 2030'):
+        coarse.coarse_interpolated_states(p)
+
+
+def test_a_skipped_task_returns_p_and_writes_nothing(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    p.run_this = False
+    assert coarse.coarse_interpolated_states(p) is p
+    assert not os.path.exists(p.cur_dir)

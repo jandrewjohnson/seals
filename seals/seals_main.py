@@ -34,7 +34,6 @@ sys.path.append(os.path.dirname(os.path.abspath(parent_dir)))
 
 
 from seals import seals_utils
-from seals.zone_change_budgets import strict_othernat_targets, audit_strict_allocation
 import pandas as pd
 import time
 import math
@@ -166,7 +165,7 @@ def target_zones_matrices(p):
                         # full_change_matrix_no_diagonal = hb.load_geotiff_chunk_by_cr_size(full_change_matrix_no_diagonal_path, offset)
                         # src_dir = os.path.join(p.allocation_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(p.year), offset[0] + '_' + offset[1])
                         for year_c, year in enumerate(p.years):
-                            src_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year), 'allocation_zones', target_zone_string)
+                            src_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year), 'allocation_zones', target_zone_string, 'allocation')
 
 
                             # Get the correct starting year path
@@ -175,14 +174,14 @@ def target_zones_matrices(p):
                                 if year_c == 0:
                                     previous_year = p.key_base_year
                                     correct_dir_year = year
-                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string)
+                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string, 'allocation')
                                     lulc_1_path = os.path.join(previous_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.model_label + '_' + str(previous_year) + '.tif')
 
 
                                 else:
                                     previous_year = p.years[year_c - 1]
                                     correct_dir_year = previous_year
-                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string)
+                                    previous_dir = os.path.join(p.intermediate_dir, 'allocations', p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(correct_dir_year), 'allocation_zones', target_zone_string, 'allocation')
                                     lulc_1_path = os.path.join(previous_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(previous_year) + '.tif')
 
 
@@ -1858,9 +1857,8 @@ def allocation_zones(p):
 
         for c, fine_block in enumerate(old_global_processing_blocks_list):
             tile_dir = str(fine_block[0]) + '_' + str(fine_block[1])
-            expected_path = os.path.join(p.cur_dir, tile_dir, 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
-            if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' or not hb.path_exists(expected_path):
-                # Strict allocation must inspect inputs and audit even on resume.
+            expected_path = os.path.join(p.cur_dir, tile_dir, 'allocation', 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
+            if not hb.path_exists(expected_path):
                 fine_blocks_list.append(old_fine_blocks_list[c])
                 coarse_blocks_list.append(old_coarse_blocks_list[c])
                 processing_blocks_list.append(old_processing_blocks_list[c])
@@ -2019,8 +2017,6 @@ def allocation(passed_p=None):
     # Actually do the allocation
 
     p = passed_p
-    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict':
-        raise RuntimeError('Cell-residual allocation requires the budget/allocation/reconciliation/audit task sequence')
 
     start = time.time()
     if p.run_this:
@@ -2172,12 +2168,6 @@ def allocation(passed_p=None):
 
 
         lulc_projected_path = os.path.join(p.cur_dir, 'lulc_' + p.lulc_src_label + '_'  + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(p.year) + '.tif')
-
-        strict_othernat = getattr(p, 'strict_othernat_accounting', False)
-        if strict_othernat and os.path.exists(lulc_projected_path):
-            raise ValueError('Strict OtherNat accounting requires a fresh allocation output '
-                             'directory. Existing maps must not bypass the budget audit: '
-                             + lulc_projected_path)
 
         if p.skip_created_downscaling_zones:
             skip_this_zone = os.path.exists(lulc_projected_path)
@@ -2484,18 +2474,11 @@ def allocation(passed_p=None):
             #     previous_change_year_array = hb.as_array(previous_change_year_path)
 
             allow_contracting = np.int64(p.allow_contracting)
-            if strict_othernat:
-                reserve_index = list(p.changing_class_labels).index('othernat')
-                projected_coarse_change_3d, budget_records = strict_othernat_targets(
-                    projected_coarse_change_3d, lulc_baseline_array, hectares_per_grid_cell,
-                    valid_mask_array, changing_class_indices_array, reserve_index)
-                pd.DataFrame(budget_records).to_csv(
-                    os.path.join(p.cur_dir, 'othernat_budget.csv'), index=False)
             # Strange choice, but the allocation function both calibrates AND RUNS the final projection using the calibration. If instead you want to
             # Run on precalibrated parameters, you have to reload coarse_change_3d.
             overall_similarity_score, lulc_projected_array, overall_similarity_plot, class_similarity_scores, class_similarity_plots, output_change_arrays, change_happened = \
-                calibrate(projected_coarse_change_3d.copy() if strict_othernat else projected_coarse_change_3d,
-                        lulc_baseline_array.copy() if strict_othernat else lulc_baseline_array,
+                calibrate(projected_coarse_change_3d,
+                        lulc_baseline_array,
                         spatial_layers_3d,
                         generation_best_parameters,
                         spatial_layer_function_types_1d,
@@ -2510,13 +2493,6 @@ def allocation(passed_p=None):
                         p.loss_function_sigma,
                         output_match_path=tile_match_path,
                         call_string=p.call_string)
-
-            if strict_othernat:
-                audit_records = audit_strict_allocation(
-                    projected_coarse_change_3d, lulc_baseline_array, lulc_projected_array,
-                    hectares_per_grid_cell, valid_mask_array, changing_class_indices_array)
-                pd.DataFrame(audit_records).to_csv(
-                    os.path.join(p.cur_dir, 'othernat_allocation_audit.csv'), index=False)
 
             # LEARNING POINT: GDAL silently fails to write if you have a file path too long. This happened below. Fix by enabling long-filepaths in OS.
 
@@ -2606,8 +2582,6 @@ def stitched_lulc_simplified_scenarios(p):
 
 
         vrt_paths_to_remove = []
-        strict_stitched = []
-        strict_baseline_hashes = {}
         for index, row in p.scenarios_df.iterrows():
             seals_utils.assign_df_row_to_object_attributes(p, row)
             hb.log('Stitching for scenario ' + str(index) + ' of ' + str(len(p.scenarios_df)))
@@ -2626,26 +2600,10 @@ def stitched_lulc_simplified_scenarios(p):
 
                     p.lulc_projected_stitched_path = os.path.join(p.cur_dir, stitched_output_name + '.tif')
 
-                    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict':
-                        from seals.allocation_provenance import validated_tiles, check_stitched_resume, record_stitched
-                        accepted_tiles = validated_tiles(target_dir, include_string)
-                        strict_base = p.get_path('lulc', p.lulc_src_label, p.lulc_simplification_label,
-                            'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + str(p.key_base_year) + '.tif',
-                            prepend_possible_dirs=p.fine_processed_inputs_dir)
-                        if strict_base not in strict_baseline_hashes:
-                            strict_baseline_hashes[strict_base] = hb.hash_file_path(strict_base)
-                        baseline_provenance = {strict_base: strict_baseline_hashes[strict_base]}
-                        check_stitched_resume(p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance)
-                        strict_stitched.append((p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance))
-
-                    newly_stitched = False
                     if not hb.path_exists(p.lulc_projected_stitched_path):
-                        newly_stitched = True
                         # Walking the allocation zones is minutes per map on a shared filesystem; it is
                         # only needed when there is something to stitch.
                         p.layers_to_stitch = hb.list_filtered_paths_recursively(target_dir, include_strings=include_string, include_extensions='.tif', depth=None)
-                        if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' and set(p.layers_to_stitch) != set(accepted_tiles):
-                            raise RuntimeError('Stitch tile set differs from accepted footprint')
                         if len(p.layers_to_stitch) > 0:
                             hb.log('Stitching for year ' + str(year))
                             hb.log('Stitching ' + str(len(p.layers_to_stitch)) + ' layers, first 1 of which was: ' + str(p.layers_to_stitch[:1]))
@@ -2772,26 +2730,12 @@ def stitched_lulc_simplified_scenarios(p):
 
                             hb.timer('end clip')
 
-                    if getattr(p, 'seals_allocation_mode', 'legacy') == 'cell_residual_strict' and newly_stitched:
-                        # Record this map now, before the next year starts. The records are also
-                        # written again after the POG conversion below, because that conversion
-                        # rewrites the maps in place and the stored hash has to describe the bytes
-                        # finally on disk. Writing them ONLY there left every finished map
-                        # unrecorded for the rest of the loop, and an error partway through -- which
-                        # is how all three bounded runs failed on 14 Oct 2026, not a node failure --
-                        # left maps the next run refused. The conversion stays 16-wide: a crash
-                        # inside it leaves a stale record, which fails loudly as 'provenance
-                        # differs' and is cleared by deleting that map, never silently accepted.
-                        record_stitched(p.lulc_projected_stitched_path, accepted_tiles, baseline_provenance)
-
         for file_path in vrt_paths_to_remove:
             hb.remove_path(file_path)
         
         # Even with 256gb memory, running 30 parallel pogers at once hits a ZSTD-related compression memory error.
         if current_force_to_global_bb:
             hb.make_paths_pogs_in_parallel(p.cur_dir, exclude_strings='2025', max_workers=16, dont_actually_do_it=False, verbose=True, verbose_pog_check=True)
-        for path, tiles, baseline in strict_stitched:
-            record_stitched(path, tiles, baseline)
 
 def luh_seals_baseline_adjustment(p):
     # SHORTCUT, this should have been put in GTAP project but i'm racing.

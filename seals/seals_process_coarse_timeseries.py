@@ -1,7 +1,6 @@
 import multiprocessing
 import os
 
-import config
 import geopandas as gpd
 import hazelbean as hb
 import netCDF4 as nc
@@ -942,12 +941,8 @@ def coarse_extraction(p):
                         'time': p.years,
                     }
 
-                # Re-extract when the parent dir is missing OR any requested year's subfolder is.
-                # The parent-dir-only check was brittle once the year set changed between runs: with
-                # time_2020/2030/2050 cached and 2040 newly requested, the directory existed so this
-                # task returned in 0.06 s having extracted nothing, and the downstream conversion
-                # then died on a missing time_2040/urban.tif. The same fix already exists in
-                # coarse_extraction_btc; this is the function the task tree actually registers.
+                # Extract when any requested year is missing, not only when the whole directory is,
+                # so adding a year to an existing project extracts it.
                 missing_year = any(
                     not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
                     for year in filter_dict['time'])
@@ -985,12 +980,8 @@ def coarse_extraction(p):
                         'time': key_base_years_as_list(p.key_base_year) + p.years,
                     }
 
-                # Re-extract when the parent dir is missing OR any requested year's subfolder is.
-                # The parent-dir-only check was brittle once the year set changed between runs: with
-                # time_2020/2030/2050 cached and 2040 newly requested, the directory existed so this
-                # task returned in 0.06 s having extracted nothing, and the downstream conversion
-                # then died on a missing time_2040/urban.tif. The same fix already exists in
-                # coarse_extraction_btc; this is the function the task tree actually registers.
+                # Extract when any requested year is missing, not only when the whole directory is,
+                # so adding a year to an existing project extracts it.
                 missing_year = any(
                     not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
                     for year in filter_dict['time'])
@@ -1144,6 +1135,64 @@ classification to the the destination classification, potentially aggregating cl
                                     output_array += np.where(input_array != ndv, input_array, 0)
                             hb.save_array_as_geotiff(output_array, dst_path, src_path)
                             output_array = None
+
+
+def coarse_interpolated_states(p):
+    """Write the coarse proportion state at each scenario's fine base year.
+
+    Coarse models step every five years, so a fine base year taken from observed land cover (ESA
+    2022, relabelled 2023) usually has no coarse state. Differencing from the nearest step would
+    span 2020-2030 where the run covers 2023-2030, and because the coarse map enters allocation as
+    an anomaly, its amplitude would be overstated by 10/7. This task writes the missing state by
+    linear interpolation between the two bracketing coarse years, or copies it when the coarse
+    model has that year. coarse_simplified_proportion stays read-only, and readers resolve this
+    directory first through seals_utils.coarse_state_dir.
+
+    A baseline_ignore_dependencies row is the reference trajectory, and its state is also written
+    under the baseline tree's naming (exogenous/model/year): that is the one common state every
+    scenario's first difference starts from.
+
+    Args:
+        p (ProjectFlow): the project, with scenarios_df, coarse_simplified_proportion_dir and
+            coarse_correspondence_path set.
+
+    Returns:
+        ProjectFlow: p.
+    """
+    if p.run_this:
+        correspondence_path = p.get_path(p.coarse_correspondence_path, possible_dirs=[p.input_dir, p.base_data_dir])
+        class_labels = hb.utils.get_reclassification_dict_from_df(
+            correspondence_path, 'src_id', 'dst_id', 'src_label', 'dst_label')['dst_labels']
+
+        for index, row in p.scenarios_df.iterrows():
+            seals_utils.assign_df_row_to_object_attributes(p, row)
+            if p.scenario_type == 'baseline':
+                continue
+
+            year = int(key_base_years_as_list(p.key_base_year)[0])
+            scenario_labels = [p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label]
+            src_dir = os.path.join(p.coarse_simplified_proportion_dir, *scenario_labels)
+            brackets = seals_utils.bracketing_coarse_years(src_dir, year)
+            if brackets is None and year not in seals_utils.coarse_years_available(src_dir):
+                raise NameError('Cannot bracket the coarse base year ' + str(year) + ' in ' + src_dir)
+
+            for class_label in class_labels:
+                src_template = class_label + '_prop_' + '_'.join(scenario_labels) + '_{year}.tif'
+                destinations = [(os.path.join(p.cur_dir, *scenario_labels, str(year)), src_template)]
+                if p.scenario_type == 'baseline_ignore_dependencies':
+                    baseline_template = class_label + '_prop_' + p.exogenous_label + '_' + p.model_label + '_{year}.tif'
+                    destinations.append((os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year)), baseline_template))
+
+                for dst_dir, dst_template in destinations:
+                    dst_path = os.path.join(dst_dir, dst_template.format(year=year))
+                    if not hb.path_exists(dst_path):
+                        if brackets:
+                            seals_utils.interpolate_coarse_state_at_year(
+                                src_dir, year, brackets, src_template, dst_dir=dst_dir, dst_filename_template=dst_template)
+                        else:
+                            hb.create_directories(dst_dir)
+                            hb.path_copy(os.path.join(src_dir, str(year), src_template.format(year=year)), dst_path)
+    return p
 
 
 def coarse_simplified_ha(p):

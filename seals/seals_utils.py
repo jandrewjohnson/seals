@@ -1659,10 +1659,8 @@ def assert_calibration_matches_processing_grid(coefficients_df, processing_block
 
     uncovered = sorted(z for z in zone_ids if z + '_1_1' not in keys)
     if minimum_coverage >= 1.0 and len(uncovered) < 0.02 * len(wanted):
-        # The extent test above already passed, so these are not keys from another grid: they are
-        # blocks this table never fitted. Allocating them without coefficients is not an option --
-        # the standard path's own fallback is disabled, so such a tile allocates NOTHING and its
-        # land-use demand disappears without any error. Name them; the remedy is to fill them.
+        # The extent test above passed, so these keys are not from another grid. The table was
+        # never fitted for these blocks, and a zone without coefficients allocates nothing.
         raise NameError(
             'The trained coefficients do not cover every tile this run will allocate.\n'
             '  coefficients: %s\n'
@@ -1670,8 +1668,8 @@ def assert_calibration_matches_processing_grid(coefficients_df, processing_block
             '  uncovered zones: %s\n'
             'Their block indices lie inside this run\'s grid, so this is not a resolution\n'
             'mismatch -- the table was never fitted for them. A zone with no coefficients\n'
-            'allocates nothing and drops its land-use demand silently, so fill these blocks\n'
-            '(nearest fitted block, recorded in a provenance manifest) and point\n'
+            'allocates nothing and drops its land-use demand silently. Fill these blocks\n'
+            '(for example from the nearest fitted block) and point\n'
             'calibration_parameters_source at the filled table.'
             % (coefficients_path, len(uncovered), len(wanted), 100 * (1 - coverage), uncovered))
 
@@ -2095,27 +2093,66 @@ def bracketing_coarse_years(source_dir, target_year):
     return max(earlier), min(later)
 
 
-def interpolate_coarse_state_at_year(source_dir, target_year, bracketing_years, filename_template):
-    """Return a linear coarse state and its match raster; write nothing.
+def interpolate_coarse_state_at_year(source_dir, target_year, bracketing_years, filename_template,
+                                     match_path=None, dst_dir=None, dst_filename_template=None):
+    """Write a coarse state for a year the coarse model has no time step at, from the two it brackets.
 
-    `coarse_interpolated_states` owns publication, cache validation and output
-    paths. The reference state remains one common trajectory at the fine base
-    year, so the first interval spans 2023–2030 rather than 2020–2030.
+    Coarse land-use models step every five years, so a fine base year taken from observed land cover
+    (ESA 2022, relabelled 2023) has no matching coarse state. Differencing from the nearest step
+    instead spans a longer interval than the run does -- 2020->2030 where 2023->2030 belongs -- and
+    that matters because the coarse map enters allocation as an ANOMALY added to the regional total
+    (covariate_sum_shift), so its amplitude is not renormalised away. A 10-year anomaly used for a
+    7-year interval overstates the spatial contrast by 10/7.
+
+    Linear between the brackets, which is the assumption the alternative makes anyway, over a five-
+    year gap instead of a ten-year one.
+
+    Args:
+        source_dir (str): directory holding one subdirectory per coarse year.
+        target_year (int): the year to write, e.g. 2023.
+        bracketing_years (tuple): the two coarse years around it, e.g. (2020, 2025).
+        filename_template (str): filename with {year} where the year appears.
+        match_path (str): raster whose geotransform the output copies; defaults to the earlier bracket's.
+        dst_dir (str or None): where to write, when the state belongs somewhere other than beside its
+            own brackets. The first difference of every scenario starts from ONE common state in the
+            baseline tree, so the reference trajectory's interpolation is written there rather than
+            into the trajectory's own directory. None writes beside the brackets, as before.
+        dst_filename_template (str or None): the name to write under, when the destination tree names
+            its files differently from the source tree. Defaults to filename_template.
+
+    Returns:
+        list: the paths written.
+
+    Raises:
+        NameError: if target_year is not strictly between the brackets, or a bracket file is absent.
     """
-    earlier,later=map(int,bracketing_years);target_year=int(target_year)
+    earlier, later = int(bracketing_years[0]), int(bracketing_years[1])
+    target_year = int(target_year)
     if not earlier < target_year < later:
-        raise NameError(f'{target_year} is not strictly between {earlier} and {later}')
-    paths=[os.path.join(source_dir,str(y),filename_template.format(year=y)) for y in (earlier,later)]
-    for path in paths:
-        if not hb.path_exists(path):raise NameError(f'cannot interpolate {target_year}: {path} is missing')
-    a,b=[hb.as_array(path).astype('float64') for path in paths]
-    if a.shape!=b.shape or hb.get_geotransform_path(paths[0])!=hb.get_geotransform_path(paths[1]):
-        raise ValueError('Coarse interpolation brackets must share one grid')
-    return a+(target_year-earlier)/(later-earlier)*(b-a),paths[0]
+        raise NameError('%d is not strictly between the bracketing years %d and %d'
+                        % (target_year, earlier, later))
+    weight = (target_year - earlier) / (later - earlier)
+
+    dst_dir = dst_dir or os.path.join(source_dir, str(target_year))
+    dst_filename_template = dst_filename_template or filename_template
+    hb.create_directories(dst_dir)
+    earlier_path = os.path.join(source_dir, str(earlier), filename_template.format(year=earlier))
+    later_path = os.path.join(source_dir, str(later), filename_template.format(year=later))
+    for path in (earlier_path, later_path):
+        if not hb.path_exists(path):
+            raise NameError('cannot interpolate %d: %s is missing' % (target_year, path))
+    dst_path = os.path.join(dst_dir, dst_filename_template.format(year=target_year))
+    if hb.path_exists(dst_path):
+        return []
+    earlier_array = hb.as_array(earlier_path).astype('float64')
+    later_array = hb.as_array(later_path).astype('float64')
+    hb.save_array_as_geotiff(earlier_array + weight * (later_array - earlier_array),
+                             dst_path, match_path or earlier_path)
+    return [dst_path]
 
 
 def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
-                         hectares_per_cell_path, class_indices):
+                         hectares_per_cell_path, class_indices, dst_path=None):
     """Per coarse cell and class, what the allocation was asked for against what it did.
 
     The allocator places EXPANDING classes on ranked cells and whatever occupies the chosen cell is
@@ -2133,6 +2170,7 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
         output_lulc_path (str): the fine LULC it produced, on the same grid.
         hectares_per_cell_path (str): hectares per fine cell, on the same grid as the LULC.
         class_indices (dict): class label -> the integer the LULC uses for it.
+        dst_path (str or None): where to write the CSV; None returns the frame without writing.
 
     Returns:
         pd.DataFrame: one row per coarse cell and class, with demanded_ha, realised_ha,
@@ -2208,38 +2246,27 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
                              available_ha=float(stock[cell]),
                              infeasible=bool(want[cell] < 0 and -want[cell] > stock[cell])))
     out = pd.DataFrame(rows)
+    if dst_path:
+        out.to_csv(dst_path, index=False)
     return out
 
 
 def coarse_state_dir(p, *parts):
-    """Resolve a task-owned interpolated state, otherwise an original coarse state."""
-    generated=getattr(p,'coarse_interpolated_states_dir',None)
-    if generated:
-        candidate=os.path.join(generated,*parts)
-        if os.path.isdir(candidate):return candidate
-    return os.path.join(p.coarse_simplified_proportion_dir,*parts)
+    """Return the directory holding a coarse proportion state, interpolated states first.
 
-def regressor_type_codes(types, gaussian_sigmas_to_test):
-    """Map spatial-regressor type names to the integer codes the allocator takes.
-
-    multiplicative is 1; additive is 2; an adjacency regressor is additive with preprocessing, so
-    gaussian_<sigma> is also 2, but only for a sigma that was actually tested -- an untested sigma
-    names coefficients that were never fitted, and is an error rather than a default.
+    coarse_interpolated_states writes the states at fine base years that the coarse model has no
+    time step for. A reader asking for such a year finds it there; every other year comes from
+    coarse_simplified_proportion. Task trees that do not register coarse_interpolated_states read
+    coarse_simplified_proportion only.
 
     Args:
-        types (iterable): the `type` column of a spatial regressors or combined calibration table.
-        gaussian_sigmas_to_test (iterable): p.gaussian_sigmas_to_test.
+        p (ProjectFlow): the project, with coarse_simplified_proportion_dir set.
+        *parts (str): the scenario labels and year, as the proportion tree nests them.
 
     Returns:
-        numpy.ndarray: int64 codes, one per entry of `types`.
-
-    Raises:
-        ValueError: if any type is not one of the admitted names.
+        str: the directory to read the state from.
     """
-    codes = {'multiplicative': 1, 'additive': 2}
-    codes.update({'gaussian_' + str(sigma): 2 for sigma in gaussian_sigmas_to_test})
-    try:
-        return np.asarray([codes[i] for i in types], np.int64)
-    except KeyError as error:
-        raise ValueError('Unknown regressor type %s; the admitted names are %s'
-                         % (error, sorted(codes))) from error
+    interpolated_dir = getattr(p, 'coarse_interpolated_states_dir', None)
+    if interpolated_dir and os.path.isdir(os.path.join(interpolated_dir, *parts)):
+        return os.path.join(interpolated_dir, *parts)
+    return os.path.join(p.coarse_simplified_proportion_dir, *parts)
