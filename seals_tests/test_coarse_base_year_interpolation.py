@@ -120,3 +120,77 @@ def test_the_default_destination_is_unchanged(tmp_path):
     written = seals_utils.interpolate_coarse_state_at_year(
         source_dir, 2023, (2020, 2030), 'cropland_{year}.tif')
     assert written == [os.path.join(source_dir, '2023', 'cropland_2023.tif')]
+
+
+SCENARIO = dict(exogenous_label='ssp2', climate_label='rcp70', model_label='magpie',
+                counterfactual_label='baseline_ignore_dependencies')
+SCENARIO_DIR = os.path.join('ssp2', 'rcp70', 'magpie', 'baseline_ignore_dependencies')
+SCENARIO_TEMPLATE = 'forest_prop_ssp2_rcp70_magpie_baseline_ignore_dependencies_{year}.tif'
+
+
+def interpolation_project(tmp_path, monkeypatch, states, key_base_year=2023,
+                          scenario_type='baseline_ignore_dependencies'):
+    """A project whose reference trajectory has coarse forest states at the given years."""
+    import pandas as pd
+    from types import SimpleNamespace
+    source_dir = str(tmp_path / 'coarse_simplified_proportion')
+    for year, value in states.items():
+        write_raster(os.path.join(source_dir, SCENARIO_DIR, str(year), SCENARIO_TEMPLATE.format(year=year)),
+                     np.full((2, 2), value))
+    rows = [dict(scenario_type='baseline', key_base_year=key_base_year, **SCENARIO),
+            dict(scenario_type=scenario_type, key_base_year=key_base_year, **SCENARIO)]
+    p = SimpleNamespace(run_this=True, cur_dir=str(tmp_path / 'coarse_interpolated_states'),
+                        coarse_interpolated_states_dir=str(tmp_path / 'coarse_interpolated_states'),
+                        coarse_simplified_proportion_dir=source_dir, coarse_correspondence_path='correspondence.csv',
+                        input_dir=str(tmp_path), base_data_dir=str(tmp_path), scenarios_df=pd.DataFrame(rows))
+    p.get_path = lambda path, **kwargs: path
+    monkeypatch.setattr(hb.utils, 'get_reclassification_dict_from_df', lambda *args: {'dst_labels': ['forest']})
+    return p
+
+
+def test_the_task_writes_the_scenario_state_and_the_common_reference_state(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    assert coarse.coarse_interpolated_states(p) is p
+
+    scenario_path = os.path.join(p.cur_dir, SCENARIO_DIR, '2023', SCENARIO_TEMPLATE.format(year=2023))
+    reference_path = os.path.join(p.cur_dir, 'ssp2', 'magpie', '2023', 'forest_prop_ssp2_magpie_2023.tif')
+    for path in (scenario_path, reference_path):
+        assert np.allclose(hb.as_array(path), 0.5), '0.2 + 0.6 * (0.7 - 0.2)'
+    assert not os.path.exists(os.path.join(p.coarse_simplified_proportion_dir, SCENARIO_DIR, '2023'))
+    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2023') == os.path.dirname(reference_path)
+    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2020') == os.path.join(
+        p.coarse_simplified_proportion_dir, 'ssp2', 'magpie', '2020')
+
+
+def test_the_task_reuses_existing_states(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    coarse.coarse_interpolated_states(p)
+    path = os.path.join(p.cur_dir, SCENARIO_DIR, '2023', SCENARIO_TEMPLATE.format(year=2023))
+    stamp = os.stat(path).st_mtime_ns
+    coarse.coarse_interpolated_states(p)
+    assert os.stat(path).st_mtime_ns == stamp
+
+
+def test_a_base_year_the_coarse_model_has_is_copied(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7}, key_base_year=2020)
+    coarse.coarse_interpolated_states(p)
+    path = os.path.join(p.cur_dir, SCENARIO_DIR, '2020', SCENARIO_TEMPLATE.format(year=2020))
+    assert np.allclose(hb.as_array(path), 0.2)
+
+
+def test_a_base_year_outside_the_coarse_years_raises(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7}, key_base_year=2030)
+    with pytest.raises(NameError, match='Cannot bracket the coarse base year 2030'):
+        coarse.coarse_interpolated_states(p)
+
+
+def test_a_skipped_task_returns_p_and_writes_nothing(tmp_path, monkeypatch):
+    from seals import seals_process_coarse_timeseries as coarse
+    p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
+    p.run_this = False
+    assert coarse.coarse_interpolated_states(p) is p
+    assert not os.path.exists(p.cur_dir)

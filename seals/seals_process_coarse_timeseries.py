@@ -1,7 +1,6 @@
 import multiprocessing
 import os
 
-import config
 import geopandas as gpd
 import hazelbean as hb
 import netCDF4 as nc
@@ -282,10 +281,15 @@ def regional_change(p):
                                     return (a * (b/c))
                                 hb.raster_calculator(input, op, covariate_multiply_shift_path, 7, -9999.)
                                 
-                                # This is the one i want to use so also save it as the template. Can choose from different algorithms above.
-                                alg_to_use_path = hb.suri(output_path_template, 'covariate_sum_shift')
+                                # Copy the configured variant to the unlabelled template name, which is what
+                                # the allocator reads. Defaults to covariate_sum_shift when the scenario does not
+                                # set region_to_coarse_algorithm, so an unconfigured run is unchanged.
+                                region_to_coarse_algorithm = getattr(p, 'region_to_coarse_algorithm', None) or 'covariate_sum_shift'
+                                if region_to_coarse_algorithm not in ('covariate_additive', 'covariate_sum_shift', 'covariate_multiply_shift'):
+                                    raise NameError('Unknown region_to_coarse_algorithm: ' + str(region_to_coarse_algorithm) + '. Must be one of covariate_additive, covariate_sum_shift, covariate_multiply_shift')
+                                alg_to_use_path = hb.suri(output_path_template, region_to_coarse_algorithm)
+                                hb.log('regional_change using ' + region_to_coarse_algorithm + ' for ' + os.path.basename(output_path_template))
                                 hb.path_copy(alg_to_use_path, output_path_template)
-                                5
                             # Given all of these, copy the one that we want to use to the name without a label
                         # 2019 2020 2021 2023 2025 2027 2029 2030 2031 2033 2035 2037 2039 2040 2041 2043 2045 2047 2049 2050             
                                 
@@ -937,7 +941,12 @@ def coarse_extraction(p):
                         'time': p.years,
                     }
 
-                if not hb.path_exists(dst_dir):
+                # Extract when any requested year is missing, not only when the whole directory is,
+                # so adding a year to an existing project extracts it.
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in filter_dict['time'])
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
             else:
                 if p.coarse_projections_input_path:
@@ -971,7 +980,12 @@ def coarse_extraction(p):
                         'time': key_base_years_as_list(p.key_base_year) + p.years,
                     }
 
-                if not hb.path_exists(dst_dir):
+                # Extract when any requested year is missing, not only when the whole directory is,
+                # so adding a year to an existing project extracts it.
+                missing_year = any(
+                    not hb.path_exists(os.path.join(dst_dir, 'time_' + str(year)))
+                    for year in filter_dict['time'])
+                if not hb.path_exists(dst_dir) or missing_year:
                     extract_global_netcdf(src_nc_path, dst_dir, adjustment_dict, filter_dict, skip_if_exists=True, verbose=0)
 
 
@@ -1123,6 +1137,64 @@ classification to the the destination classification, potentially aggregating cl
                             output_array = None
 
 
+def coarse_interpolated_states(p):
+    """Write the coarse proportion state at each scenario's fine base year.
+
+    Coarse models step every five years, so a fine base year taken from observed land cover (ESA
+    2022, relabelled 2023) usually has no coarse state. Differencing from the nearest step would
+    span 2020-2030 where the run covers 2023-2030, and because the coarse map enters allocation as
+    an anomaly, its amplitude would be overstated by 10/7. This task writes the missing state by
+    linear interpolation between the two bracketing coarse years, or copies it when the coarse
+    model has that year. coarse_simplified_proportion stays read-only, and readers resolve this
+    directory first through seals_utils.coarse_state_dir.
+
+    A baseline_ignore_dependencies row is the reference trajectory, and its state is also written
+    under the baseline tree's naming (exogenous/model/year): that is the one common state every
+    scenario's first difference starts from.
+
+    Args:
+        p (ProjectFlow): the project, with scenarios_df, coarse_simplified_proportion_dir and
+            coarse_correspondence_path set.
+
+    Returns:
+        ProjectFlow: p.
+    """
+    if p.run_this:
+        correspondence_path = p.get_path(p.coarse_correspondence_path, possible_dirs=[p.input_dir, p.base_data_dir])
+        class_labels = hb.utils.get_reclassification_dict_from_df(
+            correspondence_path, 'src_id', 'dst_id', 'src_label', 'dst_label')['dst_labels']
+
+        for index, row in p.scenarios_df.iterrows():
+            seals_utils.assign_df_row_to_object_attributes(p, row)
+            if p.scenario_type == 'baseline':
+                continue
+
+            year = int(key_base_years_as_list(p.key_base_year)[0])
+            scenario_labels = [p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label]
+            src_dir = os.path.join(p.coarse_simplified_proportion_dir, *scenario_labels)
+            brackets = seals_utils.bracketing_coarse_years(src_dir, year)
+            if brackets is None and year not in seals_utils.coarse_years_available(src_dir):
+                raise NameError('Cannot bracket the coarse base year ' + str(year) + ' in ' + src_dir)
+
+            for class_label in class_labels:
+                src_template = class_label + '_prop_' + '_'.join(scenario_labels) + '_{year}.tif'
+                destinations = [(os.path.join(p.cur_dir, *scenario_labels, str(year)), src_template)]
+                if p.scenario_type == 'baseline_ignore_dependencies':
+                    baseline_template = class_label + '_prop_' + p.exogenous_label + '_' + p.model_label + '_{year}.tif'
+                    destinations.append((os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year)), baseline_template))
+
+                for dst_dir, dst_template in destinations:
+                    dst_path = os.path.join(dst_dir, dst_template.format(year=year))
+                    if not hb.path_exists(dst_path):
+                        if brackets:
+                            seals_utils.interpolate_coarse_state_at_year(
+                                src_dir, year, brackets, src_template, dst_dir=dst_dir, dst_filename_template=dst_template)
+                        else:
+                            hb.create_directories(dst_dir)
+                            hb.path_copy(os.path.join(src_dir, str(year), src_template.format(year=year)), dst_path)
+    return p
+
+
 def coarse_simplified_ha(p):
 
     # Converts proportion to ha for each input.
@@ -1152,7 +1224,7 @@ def coarse_simplified_ha(p):
                 for year in p.base_years:
                     # As above: baseline rows have no climate_label, and the
                     # filenames below already omit it.
-                    src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.model_label, str(year))
+                    src_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.model_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year))
 
                     for class_c, class_label in enumerate(p.changing_class_labels):
@@ -1179,7 +1251,7 @@ def coarse_simplified_ha(p):
                                       + [fine_base_year] + list(p.years)))
                 for year in ha_years:
 
-                    src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
+                    src_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                     dst_dir  = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
 
                     for class_c, class_label in enumerate(p.changing_class_labels):
@@ -1245,13 +1317,13 @@ def coarse_simplified_ha_difference_from_base_year(p):
 
                     base_year = int(row['key_base_year'])
 
-                    base_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(base_year))
+                    base_year_dir = seals_utils.coarse_state_dir(p, baseline_exogenous_label, baseline_reference_model, str(base_year))
                     base_year_path = os.path.join(base_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(base_year) + '.tif')
                     # base_year_path = os.path.join(base_year_dir, p.lulc_simplification_label + '_' + v + '.tif')
 
                     for year in key_base_years_as_list(p.key_base_year) + p.years:
 
-                        src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
+                        src_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                         src_path = os.path.join(src_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year) + '.tif')
 
                         dst_dir = os.path.join(p.cur_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
@@ -1367,7 +1439,7 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                                 coarse_base_year = int(str(row['seals_key_base_year']).split(' ')[0])
                             base_year = fine_base_year
                             if coarse_base_year is not None and coarse_base_year != fine_base_year:
-                                probe_dir = os.path.join(p.coarse_simplified_proportion_dir,
+                                probe_dir = seals_utils.coarse_state_dir(p,
                                                          baseline_exogenous_label, baseline_reference_model,
                                                          str(fine_base_year))
                                 probe = os.path.join(probe_dir, str(dst_class_label) + '_prop_'
@@ -1379,7 +1451,7 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                                         'the coarse state at the fine base year %d is missing, so the '
                                         'first difference would span %d->%d instead of %d->%d and '
                                         'overstate the spatial anomaly by %d/%d. Expected %s. Run '
-                                        'coarse_base_year_interpolated for the baseline reference '
+                                        'coarse_interpolated_states for the baseline reference '
                                         'tree first; do NOT fall back to %d.'
                                         % (fine_base_year, coarse_base_year, int(p.years[0]),
                                            fine_base_year, int(p.years[0]),
@@ -1389,13 +1461,13 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                         if previous_year is None:
                             # This points into the baseline tree, which carries no
                             # climate_label - matching the filename built below.
-                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
+                            current_starting_year_dir = seals_utils.coarse_state_dir(p, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
                             current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(current_starting_year) + '.tif')
                         else:
 
 
                             current_starting_year = previous_year
-                            current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(current_starting_year))
+                            current_starting_year_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(current_starting_year))
                             # current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
                             current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(current_starting_year) + '.tif')
                             # current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(current_starting_year) + '.tif')
@@ -1407,7 +1479,7 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                             # year += 1
                             changed = 1
                                 
-                        current_ending_year_src_dir = os.path.join(p.coarse_simplified_proportion_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
+                        current_ending_year_src_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(year))
                         current_ending_year_src_path = os.path.join(current_ending_year_src_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(year) + '.tif')
 
                         # Set it back so it writes in the right place
