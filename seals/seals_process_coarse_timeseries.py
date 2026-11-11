@@ -1415,7 +1415,7 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                     # starting_year = int(row['key_base_year'])
                     # base_year = int(row['key_base_year'])
 
-                    # base_year_dir = seals_utils.coarse_state_dir(p, baseline_exogenous_label, baseline_reference_model, str(base_year))
+                    # base_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(base_year))
                     # base_year_path = os.path.join(base_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(base_year) + '.tif')
                     # # base_year_path = os.path.join(base_year_dir, p.lulc_simplification_label + '_' + v + '.tif')
 
@@ -1468,7 +1468,7 @@ def coarse_simplified_ha_difference_from_previous_year(p):
 
                             current_starting_year = previous_year
                             current_starting_year_dir = seals_utils.coarse_state_dir(p, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(current_starting_year))
-                            # current_starting_year_dir = seals_utils.coarse_state_dir(p, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
+                            # current_starting_year_dir = os.path.join(p.coarse_simplified_proportion_dir, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))
                             current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + str(current_starting_year) + '.tif')
                             # current_starting_year_path = os.path.join(current_starting_year_dir, str(dst_class_label) + '_prop_' + baseline_exogenous_label + '_' + baseline_reference_model + '_' + str(current_starting_year) + '.tif')
                         
