@@ -123,14 +123,13 @@ def test_the_default_destination_is_unchanged(tmp_path):
 
 
 SCENARIO = dict(exogenous_label='ssp2', climate_label='rcp70', model_label='magpie',
-                counterfactual_label='baseline_ignore_dependencies')
-SCENARIO_DIR = os.path.join('ssp2', 'rcp70', 'magpie', 'baseline_ignore_dependencies')
-SCENARIO_TEMPLATE = 'forest_prop_ssp2_rcp70_magpie_baseline_ignore_dependencies_{year}.tif'
+                counterfactual_label='bau')
+SCENARIO_DIR = os.path.join('ssp2', 'rcp70', 'magpie', 'bau')
+SCENARIO_TEMPLATE = 'forest_prop_ssp2_rcp70_magpie_bau_{year}.tif'
 
 
-def interpolation_project(tmp_path, monkeypatch, states, key_base_year=2023,
-                          scenario_type='baseline_ignore_dependencies'):
-    """A project whose reference trajectory has coarse forest states at the given years."""
+def interpolation_project(tmp_path, monkeypatch, states, key_base_year=2023, scenario_type='bau'):
+    """A project whose one modelled scenario has coarse forest states at the given years."""
     import pandas as pd
     from types import SimpleNamespace
     source_dir = str(tmp_path / 'coarse_simplified_proportion')
@@ -148,19 +147,19 @@ def interpolation_project(tmp_path, monkeypatch, states, key_base_year=2023,
     return p
 
 
-def test_the_task_writes_the_scenario_state_and_the_common_reference_state(tmp_path, monkeypatch):
+def test_the_task_writes_the_state_under_the_scenario_and_nowhere_else(tmp_path, monkeypatch):
     from seals import seals_process_coarse_timeseries as coarse
     p = interpolation_project(tmp_path, monkeypatch, {2020: 0.2, 2025: 0.7})
     assert coarse.coarse_interpolated_states(p) is p
 
     scenario_path = os.path.join(p.cur_dir, SCENARIO_DIR, '2023', SCENARIO_TEMPLATE.format(year=2023))
-    reference_path = os.path.join(p.cur_dir, 'ssp2', 'magpie', '2023', 'forest_prop_ssp2_magpie_2023.tif')
-    for path in (scenario_path, reference_path):
-        assert np.allclose(hb.as_array(path), 0.5), '0.2 + 0.6 * (0.7 - 0.2)'
+    assert np.allclose(hb.as_array(scenario_path), 0.5), '0.2 + 0.6 * (0.7 - 0.2)'
     assert not os.path.exists(os.path.join(p.coarse_simplified_proportion_dir, SCENARIO_DIR, '2023'))
-    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2023') == os.path.dirname(reference_path)
-    assert seals_utils.coarse_state_dir(p, 'ssp2', 'magpie', '2020') == os.path.join(
-        p.coarse_simplified_proportion_dir, 'ssp2', 'magpie', '2020')
+    # No state is written under the baseline tree's naming, whatever the row's scenario_type.
+    assert not os.path.exists(os.path.join(p.cur_dir, 'ssp2', 'magpie'))
+    labels = ('ssp2', 'rcp70', 'magpie', 'bau')
+    assert seals_utils.coarse_state_dir(p, *labels, '2023') == os.path.dirname(scenario_path)
+    assert seals_utils.coarse_state_dir(p, *labels, '2020') == os.path.join(p.coarse_simplified_proportion_dir, SCENARIO_DIR, '2020')
 
 
 def test_the_task_reuses_existing_states(tmp_path, monkeypatch):
@@ -194,3 +193,29 @@ def test_a_skipped_task_returns_p_and_writes_nothing(tmp_path, monkeypatch):
     p.run_this = False
     assert coarse.coarse_interpolated_states(p) is p
     assert not os.path.exists(p.cur_dir)
+
+
+def scenario_row(scenario_type, counterfactual_label, climate_label='rcp70'):
+    import pandas as pd
+    return pd.Series(dict(scenario_type=scenario_type, exogenous_label='ssp2', climate_label=climate_label,
+                          model_label='magpie', counterfactual_label=counterfactual_label))
+
+
+def test_a_scenario_referencing_an_observed_baseline_starts_from_its_own_state():
+    """A baseline row has no trajectory to interpolate along, so each scenario uses its own."""
+    baseline = scenario_row('baseline', '')
+    assert seals_utils.coarse_base_state_labels(scenario_row('bau', 'bau'), baseline) == ['ssp2', 'rcp70', 'magpie', 'bau']
+    assert seals_utils.coarse_base_state_labels(scenario_row('policy', 'tax', 'rcp26'), baseline) == ['ssp2', 'rcp26', 'magpie', 'tax']
+
+
+def test_scenarios_referencing_one_modelled_row_share_its_state():
+    """Pointing baseline_reference_label at a modelled row gives every scenario that row's starting state."""
+    reference = scenario_row('bau', 'reference')
+    for row in (scenario_row('policy', 'tax', 'rcp26'), scenario_row('policy', 'subsidy'), reference):
+        assert seals_utils.coarse_base_state_labels(row, reference) == ['ssp2', 'rcp70', 'magpie', 'reference']
+
+
+def test_the_reference_rows_scenario_type_is_not_consulted_beyond_baseline():
+    """Any type other than baseline is a modelled row, so a project can define its own types."""
+    reference = scenario_row('a_type_only_some_project_defines', 'reference')
+    assert seals_utils.coarse_base_state_labels(scenario_row('policy', 'tax'), reference) == ['ssp2', 'rcp70', 'magpie', 'reference']

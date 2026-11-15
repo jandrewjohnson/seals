@@ -1148,9 +1148,8 @@ def coarse_interpolated_states(p):
     model has that year. coarse_simplified_proportion stays read-only, and readers resolve this
     directory first through seals_utils.coarse_state_dir.
 
-    A baseline_ignore_dependencies row is the reference trajectory, and its state is also written
-    under the baseline tree's naming (exogenous/model/year): that is the one common state every
-    scenario's first difference starts from.
+    Every modelled row gets its own state. Which of them a scenario's first difference starts from
+    is decided where it is read, by seals_utils.coarse_base_state_labels.
 
     Args:
         p (ProjectFlow): the project, with scenarios_df, coarse_simplified_proportion_dir and
@@ -1178,20 +1177,15 @@ def coarse_interpolated_states(p):
 
             for class_label in class_labels:
                 src_template = class_label + '_prop_' + '_'.join(scenario_labels) + '_{year}.tif'
-                destinations = [(os.path.join(p.cur_dir, *scenario_labels, str(year)), src_template)]
-                if p.scenario_type == 'baseline_ignore_dependencies':
-                    baseline_template = class_label + '_prop_' + p.exogenous_label + '_' + p.model_label + '_{year}.tif'
-                    destinations.append((os.path.join(p.cur_dir, p.exogenous_label, p.model_label, str(year)), baseline_template))
-
-                for dst_dir, dst_template in destinations:
-                    dst_path = os.path.join(dst_dir, dst_template.format(year=year))
-                    if not hb.path_exists(dst_path):
-                        if brackets:
-                            seals_utils.interpolate_coarse_state_at_year(
-                                src_dir, year, brackets, src_template, dst_dir=dst_dir, dst_filename_template=dst_template)
-                        else:
-                            hb.create_directories(dst_dir)
-                            hb.path_copy(os.path.join(src_dir, str(year), src_template.format(year=year)), dst_path)
+                dst_dir = os.path.join(p.cur_dir, *scenario_labels, str(year))
+                dst_path = os.path.join(dst_dir, src_template.format(year=year))
+                if not hb.path_exists(dst_path):
+                    if brackets:
+                        seals_utils.interpolate_coarse_state_at_year(
+                            src_dir, year, brackets, src_template, dst_dir=dst_dir, dst_filename_template=src_template)
+                    else:
+                        hb.create_directories(dst_dir)
+                        hb.path_copy(os.path.join(src_dir, str(year), src_template.format(year=year)), dst_path)
     return p
 
 
@@ -1438,27 +1432,29 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                             if 'seals_key_base_year' in row.index and not pd.isna(row['seals_key_base_year']):
                                 coarse_base_year = int(str(row['seals_key_base_year']).split(' ')[0])
                             base_year = fine_base_year
+                            base_state_labels = None
                             if coarse_base_year is not None and coarse_base_year != fine_base_year:
-                                probe_dir = seals_utils.coarse_state_dir(p,
-                                                         baseline_exogenous_label, baseline_reference_model,
-                                                         str(fine_base_year))
-                                probe = os.path.join(probe_dir, str(dst_class_label) + '_prop_'
-                                                     + baseline_exogenous_label + '_'
-                                                     + baseline_reference_model + '_'
-                                                     + str(fine_base_year) + '.tif')
+                                # The coarse model has no step at the fine base year, so the first
+                                # difference starts from an interpolated state. Whose state that is
+                                # follows from the row's baseline reference.
+                                base_state_labels = seals_utils.coarse_base_state_labels(row, baseline_reference_row.iloc[0])
+                                probe_dir = seals_utils.coarse_state_dir(p, *base_state_labels, str(fine_base_year))
+                                probe = os.path.join(probe_dir, str(dst_class_label) + '_prop_' + '_'.join(base_state_labels) + '_' + str(fine_base_year) + '.tif')
                                 if not hb.path_exists(probe):
                                     raise NameError(
                                         'the coarse state at the fine base year %d is missing, so the '
                                         'first difference would span %d->%d instead of %d->%d and '
-                                        'overstate the spatial anomaly by %d/%d. Expected %s. Run '
-                                        'coarse_interpolated_states for the baseline reference '
-                                        'tree first; do NOT fall back to %d.'
+                                        'overstate the spatial anomaly by %d/%d. Expected %s, which '
+                                        'coarse_interpolated_states writes for every modelled '
+                                        'scenario row; do NOT fall back to %d.'
                                         % (fine_base_year, coarse_base_year, int(p.years[0]),
                                            fine_base_year, int(p.years[0]),
                                            int(p.years[0]) - coarse_base_year,
                                            int(p.years[0]) - fine_base_year, probe, coarse_base_year))
                             current_starting_year = base_year
-                        if previous_year is None:
+                        if previous_year is None and base_state_labels is not None:
+                            current_starting_year_path = probe
+                        elif previous_year is None:
                             # This points into the baseline tree, which carries no
                             # climate_label - matching the filename built below.
                             current_starting_year_dir = seals_utils.coarse_state_dir(p, baseline_exogenous_label, baseline_reference_model, str(current_starting_year))

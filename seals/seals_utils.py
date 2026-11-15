@@ -2270,3 +2270,23 @@ def coarse_state_dir(p, *parts):
     if interpolated_dir and os.path.isdir(os.path.join(interpolated_dir, *parts)):
         return os.path.join(interpolated_dir, *parts)
     return os.path.join(p.coarse_simplified_proportion_dir, *parts)
+
+def coarse_base_state_labels(row, baseline_reference_row):
+    """Return the labels of the scenario whose interpolated coarse state a row's first difference starts from.
+
+    This applies when the fine base year is not a coarse time step, so the starting state has to be
+    interpolated along some modelled trajectory. A baseline row is observed data with no trajectory
+    to interpolate along, so a scenario that references one starts from its own interpolated state.
+    A scenario that references another modelled row starts from that row's state instead, which is
+    how a project gives several scenarios one common starting state: point their
+    baseline_reference_label at the same modelled row.
+
+    Args:
+        row (pd.Series): the scenario row being differenced.
+        baseline_reference_row (pd.Series): the row its baseline_reference_label names.
+
+    Returns:
+        list: exogenous, climate, model and counterfactual labels, as the scenario tree nests them.
+    """
+    source_row = row if baseline_reference_row['scenario_type'] == 'baseline' else baseline_reference_row
+    return [str(source_row[column]) for column in ('exogenous_label', 'climate_label', 'model_label', 'counterfactual_label')]
