@@ -62,7 +62,7 @@ def kernel_allocation_accepted(p):
                      gdal.GDT_Int32)
     return p
 
-def run(root, routed, bottom_forest=False, change=None, lulc=None, ha=None, layer=None, years=(2018,), accepted=False):
+def run(root, routed, bottom_forest=False, change=None, lulc=None, ha=None, layer=None, years=(2018,), accepted=False, cell_budgets=None):
     lulc = region_1(bottom_forest) if lulc is None else lulc
     paths = build(os.path.join(root, 'in'), change or TARGETS, lulc=lulc, ha=ha, years=years)
     preference_path = os.path.join(root, 'in', 'preference.tif')
@@ -75,6 +75,9 @@ def run(root, routed, bottom_forest=False, change=None, lulc=None, ha=None, laye
         write_raster(layer_path, array.astype(np.float64), 0.25, -9999.0, gdal.GDT_Float64)
         df = pd.concat([df, pd.DataFrame([dict(spatial_regressor_name=name, data_location=layer_path, type='multiplicative', **coefficients)])])
     df.to_csv(paths['coefficients'], index=False)
+    for label, cells in (cell_budgets or {}).items():                 # per-cell budgets in place of the even split
+        write_raster(os.path.join(paths['change_dirs'][2018], label + '_2018_2017_ha_diff_ssp2_rcp45_luh2-message_bau.tif'),
+                     np.array(cells, dtype=np.float64), 1.0, -9999.0, gdal.GDT_Float64)
     p = hb.ProjectFlow(project_dir=os.path.join(root, 'project'))
     p.key_base_year = 2017
     p.lulc_simplified_paths = {2017: paths['lulc']}
@@ -179,16 +182,36 @@ def test_protected_othernat_in_a_cell_does_not_count_as_capacity(tmp_path):
                                             'othernat_2018_2017_ha_diff_ssp2_rcp45_luh2-message_bau.tif'))[0, 0]
     assert top_othernat == 0.0
 
-def test_a_gain_routed_to_a_cell_its_class_may_not_take_is_refused(tmp_path):
-    """Cropland +8 and pasture +2 from OtherNat -10. The region as a whole has the land (the stock check passes: cropland
-    may take the top cell's forest, pasture the bottom cell's OtherNat), but routing sends both gains to the bottom cell,
-    where a mask lets pasture take OtherNat and not cropland. The routed cell cannot hold cropland's gain: refused."""
+def test_a_gain_no_cell_of_the_region_can_take_is_refused(tmp_path):
+    """Cropland +8 and pasture +2 from OtherNat -10, all OtherNat in the bottom cell, where a mask lets pasture and not
+    cropland take it. The region as a whole passes the stock check (cropland may take the top cell's forest), but the
+    top cell has no budgeted loss to pay a gain: no cell can take cropland's 8 ha, and the run is refused."""
     lulc = region_1(False)
     mask = np.zeros(lulc.shape)
     mask[4:7, 0:4] = 1
     change = {2018: {1: {'cropland': 8.0, 'grassland': 2.0, 'othernat': -10.0}}}
-    with pytest.raises(NameError, match=r'exceed the land the gaining classes may take.*region 1 cropland 8 ha above its land'):
+    with pytest.raises(NameError, match=r'region 1 cropland gain 8 ha, loss 0 ha unplaced'):
         run(str(tmp_path), routed=True, change=change, layer=('crop_off_othernat', mask, {l: (0.0 if l == 'cropland' else 1.0) for l in LABELS}))
+
+def test_a_gain_its_own_cell_cannot_take_is_routed_to_one_that_can(tmp_path):
+    """Bottom cell: cropland +4 and pasture +4 from OtherNat -4, but a mask keeps cropland off its OtherNat. Top cell:
+    OtherNat -4, which cropland may take. Checking only after routing refused this; routing with the class's own land
+    keeps pasture in the bottom cell and sends cropland's 4 ha to the top cell."""
+    lulc = region_1(False)
+    lulc[2, 0:4] = 5                                   # top cell: 8 forest, 4 OtherNat, 4 cropland
+    mask = np.zeros(lulc.shape)
+    mask[4:7, 0:4] = 1
+    cells = {'cropland': [[0.0, 0.0], [4.0, 0.0]], 'grassland': [[0.0, 0.0], [4.0, 0.0]], 'othernat': [[-4.0, 0.0], [-4.0, 0.0]]}
+    transitions, summary, _ = run(str(tmp_path), routed=True, lulc=lulc, cell_budgets=cells,
+                                  layer=('crop_off_othernat', mask, {l: (0.0 if l == 'cropland' else 1.0) for l in LABELS}))
+    d = os.path.join(str(tmp_path), *YEAR_DIR, 'adjacent_coarse_budgets')
+    cropland = hb.as_array(os.path.join(d, 'cropland_2018_2017_ha_diff_ssp2_rcp45_luh2-message_bau.tif'))
+    grassland = hb.as_array(os.path.join(d, 'grassland_2018_2017_ha_diff_ssp2_rcp45_luh2-message_bau.tif'))
+    assert cropland[0, 0] == pytest.approx(4.0) and cropland[1, 0] == pytest.approx(0.0)
+    assert grassland[1, 0] == pytest.approx(4.0)
+    assert summary.loc[(1, 'cropland'), 'realized_net_ha'] == 4.0 and summary.loc[(1, 'grassland'), 'realized_net_ha'] == 4.0
+    # Capacity only: in the top cell the kernel still takes the better-ranked forest for cropland.
+    assert flow(transitions, 'forest', 'cropland') == 4.0 and flow(transitions, 'othernat', 'grassland') == 4.0
 
 def test_unequal_pixel_areas_route_hectares_and_spare_forest(tmp_path):
     ha = np.repeat((1.0 + 0.25 * (np.arange(8) % 4))[:, None], 8, axis=1)
@@ -211,3 +234,47 @@ def test_two_years_route_on_the_accepted_map(tmp_path):
         assert summary.loc[(1, 'cropland'), 'before_ha'] == cropland_before
         assert donor.flow(transitions, 1, 'othernat', 'cropland') == 4.0 and donor.flow(transitions, 1, 'forest', 'cropland') == 0.0
         assert summary.loc[(1, 'othernat'), 'intended_net_ha'] == -4.0
+
+# --- The router with class capacity, on its own ----------------------------------------------------------------------
+
+def test_capped_fill_gives_a_capped_class_share_to_the_others():
+    assert seals_utils.capped_proportional_fill([4.0, 4.0], [np.inf, np.inf], 4.0).tolist() == [2.0, 2.0]
+    assert seals_utils.capped_proportional_fill([4.0, 4.0], [0.0, np.inf], 4.0).tolist() == [0.0, 4.0]
+    assert seals_utils.capped_proportional_fill([4.0, 4.0], [1.0, np.inf], 6.0).tolist() == [1.0, 4.0]
+
+def test_a_gain_skips_a_preferred_cell_its_class_cannot_take():
+    """One region of three cells in a row. Cropland gains 4 ha in cell S, which cannot take cropland. Neighbours A and
+    B both have spare loss capacity; A is preferred 10:1 but cannot take cropland, B can. Without class capacity the
+    preference sends most of the gain to A; with it, all of it goes to B."""
+    signed = np.zeros((2, 1, 3))
+    signed[0] = [[4.0, 0.0, 0.0]]                       # cropland gain in S
+    signed[1] = [[-4.0, -4.0, -4.0]]                    # OtherNat loss in S, A, B
+    stock = np.zeros((2, 1, 3))
+    stock[1] = 10.0
+    regions = np.ones((1, 3), dtype=np.int64)
+    weights = np.ones((2, 1, 3))
+    weights[0] = [[1.0, 10.0, 1.0]]
+    receivable = np.zeros((2, 1, 3))
+    receivable[0] = [[0.0, 0.0, 10.0]]
+    plain = seals_utils.route_signed_budgets_to_adjacent_cells(signed, stock, regions, weights, stock, 'queen', 'never')
+    capped = seals_utils.route_signed_budgets_to_adjacent_cells(signed, stock, regions, weights, stock, 'queen', 'never', gain_class_capacity=receivable)
+    assert plain['budgets'][0, 0].tolist() == pytest.approx([4.0, 0.0, 0.0])           # kept in S, where cropland cannot go
+    assert capped['budgets'][0, 0].tolist() == pytest.approx([0.0, 0.0, 4.0])
+    assert capped['unplaced_gain'].sum() == 0 and capped['budgets'][0].sum() == pytest.approx(4.0)
+
+def test_competing_gainers_share_a_cell_within_their_own_land_and_overflow_moves_on():
+    """Cell S: cropland +3 and pasture +3, loss capacity 4, cropland may take only 1 ha there. Cropland keeps 1, pasture
+    takes the other 3, and cropland's remaining 2 ha go to neighbour B; totals are unchanged."""
+    signed = np.zeros((3, 1, 2))
+    signed[0] = [[3.0, 0.0]]
+    signed[1] = [[3.0, 0.0]]
+    signed[2] = [[-4.0, -2.0]]
+    stock = np.zeros((3, 1, 2))
+    stock[2] = 10.0
+    receivable = np.full((3, 1, 2), 10.0)
+    receivable[0] = [[1.0, 10.0]]
+    routed = seals_utils.route_signed_budgets_to_adjacent_cells(signed, stock, np.ones((1, 2), dtype=np.int64), np.ones((3, 1, 2)), stock,
+                                                                'queen', 'never', gain_class_capacity=receivable)
+    assert routed['budgets'][0, 0].tolist() == pytest.approx([1.0, 2.0])
+    assert routed['budgets'][1, 0].tolist() == pytest.approx([3.0, 0.0])
+    assert routed['budgets'][:2].sum() == pytest.approx(6.0) and routed['unplaced_gain'].sum() == 0

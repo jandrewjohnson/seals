@@ -1742,8 +1742,9 @@ def adjacent_coarse_budgets(p):
     cannot lose more in a cell than its losable stock, a cell cannot gain more than it loses, and the excess moves ring
     by ring to cells of the same region, losses weighted by where the losable stock is and gains by
     p.adjacent_gain_weight_paths (label -> coarse raster, for example a LuccME preference; uniform when not given).
-    Each cell's routed gains are then checked against the land each class may take there and, together, against the land
-    any of them may take, each pixel counted once. These are necessary conditions only: no joint assignment of pixels to
+    Gains are kept and moved only where their class may take land and within the land any gaining class may take, so a
+    gain its own cell cannot take goes to a cell of the region that can. The routed gains are checked against both again
+    afterwards. These are necessary conditions only: no joint assignment of pixels to
     competing gainers is solved, and the allocator still takes losses by rank.
 
     Writes one routed raster per class, named as allocation expects, and adjacent_coarse_budgets.csv per region and
@@ -1831,7 +1832,8 @@ def adjacent_coarse_budgets(p):
         gain_weights = np.array([hb.as_array(weight_paths[label]).astype(np.float64) if label in weight_paths else np.ones(regions.shape)
                                  for label in labels])
         routed = seals_utils.route_signed_budgets_to_adjacent_cells(signed, losable, regions, gain_weights, losable,
-                                                                    settings['neighborhood'], settings['zero_weight_cells'])
+                                                                    settings['neighborhood'], settings['zero_weight_cells'],
+                                                                    gain_class_capacity=receivable, gain_shared_capacity=any_receivable)
         gains = np.maximum(routed['budgets'], 0.0)
         beyond_class = np.maximum(gains - receivable, 0.0)
         beyond_shared = np.maximum(gains.sum(axis=0) - any_receivable, 0.0)

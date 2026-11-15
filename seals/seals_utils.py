@@ -2800,7 +2800,37 @@ def sum_fine_classes_to_coarse(lulc_array, ha_array, class_ids, ratio, lulc_ndv)
                          for class_id in class_ids])
     return class_ha, upscale_retaining_sum(valid_ha, ratio)
 
-def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, neighborhood, zero_weight_cells):
+def capped_proportional_fill(demand, caps, capacity):
+    """Share one capacity between classes in proportion to their demand, no class above its own cap.
+
+    A class that reaches its demand or its cap stops taking, and the rest of the capacity is shared again among the
+    others, so a capped class leaves no capacity unused. Without binding caps this is the plain proportional share.
+    It is a fill, not an optimizer: no class is favoured and the result does not depend on class order.
+
+    Args:
+        demand (ndarray): (n_classes,) hectares asked, >= 0.
+        caps (ndarray): (n_classes,) the most each class may take, >= 0.
+        capacity (float): hectares available to all classes together, >= 0.
+
+    Returns:
+        ndarray: (n_classes,) hectares given to each class.
+    """
+    demand = np.asarray(demand, dtype=np.float64)
+    limit = np.minimum(demand, np.asarray(caps, dtype=np.float64))
+    given = np.zeros_like(demand)
+    remaining = float(capacity)
+    for _ in range(len(demand) + 1):
+        open_classes = (limit - given > 1e-12) & (demand > 0)
+        if remaining <= 1e-12 or not open_classes.any():
+            break
+        share = np.where(open_classes, demand, 0.0)
+        offer = remaining * share / share.sum()
+        give = np.minimum(offer, limit - given)
+        given += give
+        remaining -= give.sum()
+    return given
+
+def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, neighborhood, zero_weight_cells, class_capacity=None):
     """Keep each coarse cell's expansion targets where they fit, and move only the excess to nearby cells of its region.
 
     In each cell, the targets of all classes share one eligible capacity. Where they exceed it, every class keeps the
@@ -2822,6 +2852,10 @@ def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, nei
         weights (ndarray): (n_classes, rows, cols) preference for receiving residual, >= 0.
         neighborhood (str): 'rook' (4 neighbours) or 'queen' (8 neighbours).
         zero_weight_cells (str): 'after_positive' or 'never'.
+        class_capacity (ndarray): optional (n_classes, rows, cols), the most each class may take in each cell, >= 0.
+            When given, a class keeps and receives no more than this, a cell where it is used up is not offered that
+            class's residual, and the cell's shared capacity is filled with capped_proportional_fill so a capped class
+            leaves its share to the others. When None, the result is the plain proportional one above.
 
     Returns:
         dict: 'targets' the routed targets, 'initial' the part kept in place, 'unplaced' residual left at its source
@@ -2852,8 +2886,18 @@ def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, nei
 
     epsilon = 1e-9 * max(1.0, float(capacity.max(initial=0.0)))
     demand = targets.sum(axis=0)
-    kept_fraction = np.where(demand > capacity, capacity / np.where(demand > 0, demand, 1.0), 1.0)
-    initial = targets * kept_fraction
+    if class_capacity is None:
+        kept_fraction = np.where(demand > capacity, capacity / np.where(demand > 0, demand, 1.0), 1.0)
+        initial = targets * kept_fraction
+        class_spare = None
+    else:
+        class_capacity = np.asarray(class_capacity, dtype=np.float64)
+        if class_capacity.shape != targets.shape or not np.all(np.isfinite(class_capacity)) or np.any(class_capacity < 0):
+            raise NameError('class_capacity must be finite, >= 0 and shaped like targets.')
+        initial = np.zeros_like(targets)
+        for r, c in zip(*np.nonzero(demand > 0)):
+            initial[:, r, c] = capped_proportional_fill(targets[:, r, c], class_capacity[:, r, c], capacity[r, c])
+        class_spare = np.maximum(class_capacity - initial, 0.0)
     residual = targets - initial
     spare = np.maximum(capacity - initial.sum(axis=0), 0.0)
     routed = initial.copy()
@@ -2887,6 +2931,7 @@ def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, nei
                         if residual[k][source] <= epsilon:
                             continue
                         cells = [cell for cell in ring_cells[source] if spare[cell] > epsilon
+                                 and (class_spare is None or class_spare[k][cell] > epsilon)
                                  and ((weights[k][cell] > 0) if tier == 'positive' else (weights[k][cell] == 0))]
                         if not cells:
                             continue
@@ -2896,16 +2941,24 @@ def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, nei
                 if not offers:
                     break
                 offered = {}
-                for _, _, cell, amount in offers:
-                    offered[cell] = offered.get(cell, 0.0) + amount
-                accepted_fraction = {cell: min(1.0, spare[cell] / amount) for cell, amount in offered.items()}
+                for _, k, cell, amount in offers:
+                    offered.setdefault(cell, np.zeros(n_classes))[k] += amount
+                fraction = {}
+                for cell, by_class in offered.items():
+                    if class_spare is None:
+                        fraction[cell] = np.full(n_classes, min(1.0, spare[cell] / by_class.sum()))
+                    else:
+                        taken = capped_proportional_fill(by_class, class_spare[:, cell[0], cell[1]], spare[cell])
+                        fraction[cell] = np.where(by_class > 0, taken / np.where(by_class > 0, by_class, 1.0), 0.0)
                 for source, k, cell, amount in offers:
-                    accepted = amount * accepted_fraction[cell]
+                    accepted = amount * fraction[cell][k]
                     routed[k][cell] += accepted
                     residual[k][source] -= accepted
+                    if class_spare is not None:
+                        class_spare[k][cell] = max(class_spare[k][cell] - accepted, 0.0)
                     furthest_ring = max(furthest_ring, ring)
-                for cell, amount in offered.items():
-                    spare[cell] = max(spare[cell] - amount * accepted_fraction[cell], 0.0)
+                for cell, by_class in offered.items():
+                    spare[cell] = max(spare[cell] - float((by_class * fraction[cell]).sum()), 0.0)
         sources = [source for source in sources if residual[:, source[0], source[1]].sum() > epsilon and frontier[source]]
 
     unplaced = residual
@@ -2917,7 +2970,8 @@ def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, nei
             raise NameError('Routing did not conserve hectares in region ' + str(region) + ': ' + str(before) + ' vs ' + str(after))
     return {'targets': routed, 'initial': initial, 'unplaced': unplaced, 'rings': furthest_ring}
 
-def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids, gain_weights, loss_weights, neighborhood, zero_weight_cells):
+def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids, gain_weights, loss_weights, neighborhood, zero_weight_cells,
+                                           gain_class_capacity=None, gain_shared_capacity=None):
     """Turn signed coarse targets into budgets each cell can pay from its own land, moving only the excess to nearby cells.
 
     Losses are placed first. A class cannot lose more hectares in a cell than it holds there, so the part of a loss
@@ -2939,6 +2993,11 @@ def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids,
         loss_weights (ndarray): (n_classes, rows, cols) each class's preference for receiving moved losses, >= 0.
         neighborhood (str): 'rook' or 'queen', as in route_residual_to_adjacent_cells.
         zero_weight_cells (str): 'after_positive' or 'never', as in route_residual_to_adjacent_cells.
+        gain_class_capacity (ndarray): optional (n_classes, rows, cols), the land each class may take in each cell.
+            Gains are then kept and moved only where their class may take land, so a cell that cannot take a class
+            passes that class's gain on to cells that can.
+        gain_shared_capacity (ndarray): optional (rows, cols), the land any gaining class may take in each cell, each
+            pixel counted once. A cell's gain capacity is then the smaller of this and its placed losses.
 
     Returns:
         dict: 'budgets' (n_classes, rows, cols) the signed hectares to allocate; 'unplaced_loss' and 'unplaced_gain'
@@ -2966,7 +3025,10 @@ def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids,
             placed_losses[k] = routed['targets'][0]
             unplaced_loss[k] = routed['unplaced'][0]
     gain_capacity = placed_losses.sum(axis=0)
-    routed = route_residual_to_adjacent_cells(gains, gain_capacity, region_ids, gain_weights, neighborhood, zero_weight_cells)
+    if gain_shared_capacity is not None:
+        gain_capacity = np.minimum(gain_capacity, np.asarray(gain_shared_capacity, dtype=np.float64))
+    routed = route_residual_to_adjacent_cells(gains, gain_capacity, region_ids, gain_weights, neighborhood, zero_weight_cells,
+                                              class_capacity=gain_class_capacity)
     budgets = routed['targets'] - placed_losses
     return {'budgets': budgets, 'unplaced_loss': unplaced_loss, 'unplaced_gain': routed['unplaced'], 'cell_balance': budgets.sum(axis=0)}
 
