@@ -1980,7 +1980,8 @@ def allocation_zones(p):
                 zone_ids = []
             if zone_ids:
                 coverage = seals_utils.assert_calibration_matches_processing_grid(
-                    df, zone_ids, p.processing_resolution, calibration_parameters_path)
+                    df, zone_ids, p.processing_resolution, calibration_parameters_path,
+                    minimum_coverage=1.0)
                 if coverage is not None:
                     hb.log('Calibration grid check: %.1f%% of this run\'s zones find a key in %s'
                            % (100 * coverage, os.path.basename(calibration_parameters_path)))

@@ -1657,6 +1657,22 @@ def assert_calibration_matches_processing_grid(coefficients_df, processing_block
     if coverage >= minimum_coverage:
         return coverage
 
+    uncovered = sorted(z for z in zone_ids if z + '_1_1' not in keys)
+    if minimum_coverage >= 1.0 and len(uncovered) < 0.02 * len(wanted):
+        # The extent test above passed, so these keys are not from another grid. The table was
+        # never fitted for these blocks, and a zone without coefficients allocates nothing.
+        raise NameError(
+            'The trained coefficients do not cover every tile this run will allocate.\n'
+            '  coefficients: %s\n'
+            '  %d of %d scheduled zones (%.4f%%) have no calibration key\n'
+            '  uncovered zones: %s\n'
+            'Their block indices lie inside this run\'s grid, so this is not a resolution\n'
+            'mismatch -- the table was never fitted for them. A zone with no coefficients\n'
+            'allocates nothing and drops its land-use demand silently. Fill these blocks\n'
+            '(for example from the nearest fitted block) and point\n'
+            'calibration_parameters_source at the filled table.'
+            % (coefficients_path, len(uncovered), len(wanted), 100 * (1 - coverage), uncovered))
+
     raise NameError(
         'The trained coefficients were fitted on a different processing grid than this run.\n'
         '  coefficients: %s\n'
@@ -2233,3 +2249,44 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
     if dst_path:
         out.to_csv(dst_path, index=False)
     return out
+
+
+def coarse_state_dir(p, *parts):
+    """Return the directory holding a coarse proportion state, interpolated states first.
+
+    coarse_interpolated_states writes the states at fine base years that the coarse model has no
+    time step for. A reader asking for such a year finds it there; every other year comes from
+    coarse_simplified_proportion. Task trees that do not register coarse_interpolated_states read
+    coarse_simplified_proportion only.
+
+    Args:
+        p (ProjectFlow): the project, with coarse_simplified_proportion_dir set.
+        *parts (str): the scenario labels and year, as the proportion tree nests them.
+
+    Returns:
+        str: the directory to read the state from.
+    """
+    interpolated_dir = getattr(p, 'coarse_interpolated_states_dir', None)
+    if interpolated_dir and os.path.isdir(os.path.join(interpolated_dir, *parts)):
+        return os.path.join(interpolated_dir, *parts)
+    return os.path.join(p.coarse_simplified_proportion_dir, *parts)
+
+def coarse_base_state_labels(row, baseline_reference_row):
+    """Return the labels of the scenario whose interpolated coarse state a row's first difference starts from.
+
+    This applies when the fine base year is not a coarse time step, so the starting state has to be
+    interpolated along some modelled trajectory. A baseline row is observed data with no trajectory
+    to interpolate along, so a scenario that references one starts from its own interpolated state.
+    A scenario that references another modelled row starts from that row's state instead, which is
+    how a project gives several scenarios one common starting state: point their
+    baseline_reference_label at the same modelled row.
+
+    Args:
+        row (pd.Series): the scenario row being differenced.
+        baseline_reference_row (pd.Series): the row its baseline_reference_label names.
+
+    Returns:
+        list: exogenous, climate, model and counterfactual labels, as the scenario tree nests them.
+    """
+    source_row = row if baseline_reference_row['scenario_type'] == 'baseline' else baseline_reference_row
+    return [str(source_row[column]) for column in ('exogenous_label', 'climate_label', 'model_label', 'counterfactual_label')]
