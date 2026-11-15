@@ -2233,3 +2233,335 @@ def reconcile_allocation(coarse_change_paths, input_lulc_path, output_lulc_path,
     if dst_path:
         out.to_csv(dst_path, index=False)
     return out
+
+def check_fine_coarse_alignment(fine_path, coarse_path):
+    """Return how many fine pixels span one coarse cell, after checking that the two grids nest exactly.
+
+    Args:
+        fine_path (str): raster on the fine grid.
+        coarse_path (str): raster on the coarse grid.
+
+    Returns:
+        int: the number of fine pixels along one side of a coarse cell.
+
+    Raises:
+        NameError: if the CRSs differ, a grid is rotated, the cell-size ratio is not a whole number, or the two
+            rasters do not cover the same extent (which includes an origin offset by part of a fine pixel).
+    """
+    from osgeo import osr
+    fine = hb.get_raster_info_hb(fine_path)
+    coarse = hb.get_raster_info_hb(coarse_path)
+    fine_srs = osr.SpatialReference(wkt=fine['projection'])
+    coarse_srs = osr.SpatialReference(wkt=coarse['projection'])
+    if not fine_srs.IsSame(coarse_srs):
+        raise NameError('Fine and coarse rasters have different CRSs: ' + fine_path + ', ' + coarse_path)
+    fg, cg = fine['geotransform'], coarse['geotransform']
+    if fg[2] != 0 or fg[4] != 0 or cg[2] != 0 or cg[4] != 0:
+        raise NameError('Rotated grids are not supported: ' + fine_path + ', ' + coarse_path)
+    ratio_x, ratio_y = cg[1] / fg[1], cg[5] / fg[5]
+    ratio = int(round(ratio_x))
+    if ratio < 1 or abs(ratio_x - ratio) > 1e-6 or abs(ratio_y - ratio) > 1e-6:
+        raise NameError('The coarse cell is not a whole number of fine pixels (' + str(ratio_x) + ', ' + str(ratio_y) + '): ' + fine_path + ', ' + coarse_path)
+    tolerance = 1e-6 * abs(fg[1])
+    fine_rows, fine_cols = fine['shape']
+    coarse_rows, coarse_cols = coarse['shape']
+    if abs(fg[0] - cg[0]) > tolerance or abs(fg[3] - cg[3]) > tolerance or (fine_rows, fine_cols) != (coarse_rows * ratio, coarse_cols * ratio):
+        raise NameError('Fine and coarse rasters do not cover the same extent: ' + fine_path + ', ' + coarse_path)
+    return ratio
+
+def describe_file_identity(path):
+    """Return the size, modification time and sha256 of a file, recorded once when an output is made from it."""
+    stat = os.stat(path)
+    return {'path': path, 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns, 'sha256': hb.hash_file_path(path)}
+
+def confirm_file_identity(recorded):
+    """Check a file against its recorded identity, hashing it again only when its size or time has changed.
+
+    Args:
+        recorded (dict): the output of describe_file_identity.
+
+    Returns:
+        dict: the record, refreshed if only the size or time changed and the bytes are the same.
+
+    Raises:
+        NameError: if the file's bytes differ from the recorded ones.
+    """
+    stat = os.stat(recorded['path'])
+    if stat.st_size == recorded['size'] and stat.st_mtime_ns == recorded['mtime_ns']:
+        return recorded
+    current = describe_file_identity(recorded['path'])
+    if current['sha256'] != recorded['sha256']:
+        raise NameError('Input changed since the output was made: ' + recorded['path'] + '. Delete the output to recompute it.')
+    return current
+
+def reuse_outputs_if_inputs_unchanged(task_name, provenance_path, output_paths, sources, settings):
+    """Decide whether a task may reuse its outputs, by checking the inputs and settings recorded when they were made.
+
+    Returns False when an output or the record is missing, so the task makes everything again. Returns True when all
+    outputs exist and every recorded input still has the same bytes, after a size and time check that hashes a file
+    again only if that check changes; a record refreshed that way is saved. Raises when the settings, the set of
+    inputs or any input's bytes differ, because the outputs then no longer describe the inputs.
+
+    Args:
+        task_name (str): named in the error.
+        provenance_path (str): the JSON record written by save_provenance.
+        output_paths (list): every output the task makes.
+        sources (dict): name -> path of every input file.
+        settings (dict): every setting the outputs depend on, as JSON values.
+
+    Returns:
+        bool: True if the outputs can be reused.
+
+    Raises:
+        NameError: if the settings, input paths or input bytes differ from the record.
+    """
+    import json
+    if not (hb.path_exists(provenance_path) and all(hb.path_exists(i) for i in output_paths)):
+        return False
+    with open(provenance_path) as f:
+        recorded = json.load(f)
+    if recorded['settings'] != json.loads(json.dumps(settings)) or set(recorded['sources']) != set(sources) or any(
+            recorded['sources'][key]['path'] != path for key, path in sources.items()):
+        raise NameError(task_name + ' inputs or settings differ from those recorded in ' + provenance_path + '. Delete the outputs to recompute them.')
+    confirmed = {key: confirm_file_identity(record) for key, record in recorded['sources'].items()}
+    if confirmed != recorded['sources']:
+        with open(provenance_path, 'w') as f:
+            json.dump({'sources': confirmed, 'settings': recorded['settings']}, f, indent=2)
+    return True
+
+def save_provenance(provenance_path, sources, settings):
+    """Record the identity of every input and the settings, after a task has written its outputs."""
+    import json
+    with open(provenance_path, 'w') as f:
+        json.dump({'sources': {key: describe_file_identity(path) for key, path in sources.items()}, 'settings': settings}, f, indent=2)
+
+def prepare_allocation_coefficients(p, df, calibration_parameters_path):
+    """Make a read coefficient table the one this run allocates with: check its class scheme, rebuild the presence
+    constraints for this scenario and point every layer at this run's own files.
+
+    allocation_zones and the pre-allocation stock check both call this, so the two read the same constraints.
+
+    Args:
+        p (ProjectFlow): the run; reads changing_class_labels, all_class_labels, the protected-class setting,
+            fine_processed_inputs_dir, key_base_year, base_data_dir and the lulc labels.
+        df (pandas.DataFrame): the coefficient table as read.
+        calibration_parameters_path (str): where df was read from, named in errors.
+
+    Returns:
+        pandas.DataFrame: the table to allocate with.
+    """
+    # Fail here rather than allocating with coefficients fitted for other classes.
+    # Class ids shift between schemes, so the wrong file misassigns classes silently
+    # and still produces a map.
+    scheme_labels = getattr(p, 'changing_class_labels', None)
+    if scheme_labels:
+        check_coefficients_match_class_scheme(
+            df, scheme_labels, coefficients_path=calibration_parameters_path)
+    else:
+        hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
+
+    # Rebuild the constraint block for THIS run, discarding what the file carried. We
+    # train unconstrained and allocate constrained, so the block belongs to the scenario
+    # rather than to the calibration that produced the file. water/other/othernat need no
+    # declaration -- they are derived, having no coarse budget in this configuration.
+    if scheme_labels:
+        additional_protected = resolve_additional_protected_class_labels(p)
+        df = apply_presence_constraints(
+            df, p.all_class_labels, scheme_labels, additional_protected)
+        hb.log('Rebuilt presence constraints; protected: ' + ', '.join(
+            protected_class_labels(
+                p.all_class_labels, scheme_labels, additional_protected)))
+
+    # Point the presence constraints at this run's own layer for the year it allocates
+    # from, rather than trusting the path baked in when the coefficients were produced.
+    # That path names the calibration's project and the year it was trained to, so a
+    # file used anywhere else points at a directory that need not exist and a year that
+    # need not be the base year. A layer from after the base year also encodes land
+    # cover the run should not see.
+    # Re-root the per-project regressor layers before anything reads them. A
+    # coefficient file fitted elsewhere names that project's directories, which need
+    # not exist here; every project generates its own copies under the same relative
+    # path. Shared covariates in base_data are untouched.
+    df = rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year,
+                              p.base_data_dir)
+
+    df = resolve_constraint_layers(
+        df, p.fine_processed_inputs_dir, p.lulc_src_label,
+        p.lulc_simplification_label, p.key_base_year)
+
+    # TODO This is bad. Fix it.
+    # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
+    # TODOOO AGAIN. Indeed, still bad.
+    year_replacement_dict = {}
+    year_replacement_dict['2014'] = p.key_base_year
+    for src, dst in year_replacement_dict.items():
+
+        df['data_location'] = df.loc[:, 'data_location'].replace({str(src): str(dst)}, regex=True)
+    return df
+
+def projected_coarse_change_paths(p):
+    """The coarse net-change raster of each changing class that allocation reads for p.year, in class order."""
+    filename_end = ('_' + str(p.year) + '_' + str(p.previous_year) + '_ha_diff_' + p.exogenous_label + '_' + p.climate_label + '_'
+                    + p.model_label + '_' + p.counterfactual_label + '.tif')
+    return [os.path.join(p.projected_coarse_change_dir, label + filename_end) for label in p.changing_class_labels]
+
+def resolve_calibration_parameters_path(p):
+    """Find the coefficient table the way allocation_zones does, but raise instead of logging when it is missing.
+
+    Raises:
+        NameError: if calibration_parameters_source is 'calibration_task' (one table per zone, which a regional check
+            cannot read before the zones exist) or names no file.
+    """
+    source = p.calibration_parameters_source
+    if source == 'calibration_task':
+        raise NameError('The stock check needs one coefficient table for the whole run; calibration_task gives one per zone.')
+    path = p.get_path(str(source), leave_ref_path_if_fail=True) if hb.looks_like_path(source) else source
+    for candidate in (path, os.path.join(p.input_dir, str(source)), os.path.join(p.base_data_dir, str(source))):
+        if hb.path_exists(candidate):
+            return candidate
+    raise NameError('Coefficient table not found for calibration_parameters_source ' + str(source))
+
+def feasibility_constraint_layers(coefficients_df, changing_class_labels):
+    """The multiplicative layers that decide where each changing class may be placed.
+
+    Args:
+        coefficients_df (pandas.DataFrame): a table from prepare_allocation_coefficients.
+        changing_class_labels (list): the changing classes, in allocation order.
+
+    Returns:
+        tuple: layer names (list), layer paths (list) and coefficients (numpy array, class by layer).
+
+    Raises:
+        NameError: if a multiplicative layer has different paths or coefficients in different calibration blocks,
+            because a regional check cannot then know which applies to a pixel.
+    """
+    column_for = dict(zip(coefficient_class_labels(coefficients_df), coefficient_class_columns(coefficients_df)))
+    columns = ['spatial_regressor_name', 'data_location'] + [column_for[label] for label in changing_class_labels]
+    rows = coefficients_df.loc[coefficients_df['type'] == 'multiplicative', columns].drop_duplicates()
+    varying = sorted(set(rows.loc[rows['spatial_regressor_name'].duplicated(), 'spatial_regressor_name']))
+    if varying:
+        raise NameError('Multiplicative layers differ between calibration blocks, so the stock check cannot apply them: '
+                        + ', '.join(varying))
+    coefficients = rows[[column_for[label] for label in changing_class_labels]].to_numpy(dtype=np.float64).T
+    return list(rows['spatial_regressor_name']), list(rows['data_location']), coefficients
+
+def placement_allowed(layers_3d, coefficients):
+    """Where each class may be placed under the multiplicative layers, as the allocator computes it.
+
+    The allocator multiplies a class's suitability by 1 - (1 - coefficient) * layer for every multiplicative layer and
+    never places the class where the product is 0.
+
+    Args:
+        layers_3d (numpy.ndarray): layer by row by column.
+        coefficients (numpy.ndarray): class by layer.
+
+    Returns:
+        numpy.ndarray: boolean, class by row by column.
+    """
+    allowed = np.ones((coefficients.shape[0],) + layers_3d.shape[1:], dtype=np.float64)
+    for k in range(coefficients.shape[0]):
+        for j in range(layers_3d.shape[0]):
+            allowed[k] *= 1.0 - (1.0 - coefficients[k, j]) * layers_3d[j]
+    return allowed != 0
+
+def regional_stock_capacity(lulc_array, valid_array, locked_array, ha_array, region_array, class_ids, allowed_3d,
+                            gaining_by_region, n_regions):
+    """Hectares, per region, of each class's stock and of the land each gaining class may take.
+
+    A pixel counts in exactly one class, so the class stocks never share hectares. Gains do share land, so their
+    joint capacity is counted once per pixel in any_receivable.
+
+    Args:
+        lulc_array (numpy.ndarray): the map the year allocates from.
+        valid_array (numpy.ndarray): bool, pixels the allocator may consider at all (base-year land cover not nodata).
+        locked_array (numpy.ndarray): bool, pixels already changed in an earlier year, which may not change again.
+        ha_array (numpy.ndarray): hectares of each pixel.
+        region_array (numpy.ndarray): region id of each pixel, 0 outside every region.
+        class_ids (list): changing class ids, in allocation order.
+        allowed_3d (numpy.ndarray): bool, class by row by column, from placement_allowed.
+        gaining_by_region (numpy.ndarray): bool, class by region id, True where the region asks the class to gain.
+        n_regions (int): the largest region id.
+
+    Returns:
+        dict: 'physical', 'eligible', 'losable' and 'receivable' (class by region id) and 'any_receivable' (region id).
+            physical is the valid stock, eligible leaves out locked pixels, losable keeps only eligible pixels some
+            gaining class of the region may take, receivable is the land each class may gain on.
+    """
+    region = region_array.astype(np.int64)
+    size = n_regions + 1
+
+    def total(mask):
+        return np.bincount(region.ravel(), weights=np.where(mask & (region > 0), ha_array, 0.0).ravel(), minlength=size)[:size]
+
+    open_land = valid_array & ~locked_array
+    receivable = [open_land & allowed_3d[k] & (lulc_array != class_ids[k]) & gaining_by_region[k][region] for k in range(len(class_ids))]
+    any_receivable = np.logical_or.reduce(receivable)
+    out = {'physical': [], 'eligible': [], 'losable': [], 'receivable': []}
+    for k, class_id in enumerate(class_ids):
+        is_class = lulc_array == class_id
+        out['physical'].append(total(is_class & valid_array))
+        out['eligible'].append(total(is_class & open_land))
+        out['losable'].append(total(is_class & any_receivable))
+        out['receivable'].append(total(receivable[k]))
+    out = {key: np.array(value) for key, value in out.items()}
+    out['any_receivable'] = total(any_receivable)
+    return out
+
+def evaluate_regional_feasibility(demand, capacity, class_labels, tolerance_ha=1e-6):
+    """Compare each region's net change with the land it can supply, before anything is allocated.
+
+    Necessary, not sufficient: a region that passes can still miss its targets, because the allocator places gains
+    within each coarse cell, rounds to whole pixels and takes losses by rank without reading negative targets.
+
+    Args:
+        demand (numpy.ndarray): net change in hectares, class by region id.
+        capacity (dict): from regional_stock_capacity.
+        class_labels (list): changing class labels, in allocation order.
+        tolerance_ha (float): floating-point slack only, in hectares.
+
+    Returns:
+        pandas.DataFrame: one row per region and class with a non-zero change, plus one 'all_gains' row per region with
+            any gain. A loss is compared with the losable stock, a gain with the land the class may take, and the
+            region's gains together with the land any of them may take. shortfall_ha > 0 marks a failure.
+    """
+    rows = []
+    for region_id in np.nonzero(np.any(demand != 0, axis=0))[0]:
+        for k, label in enumerate(class_labels):
+            change = float(demand[k, region_id])
+            if change == 0:
+                continue
+            check, available = ('loss', capacity['losable'][k, region_id]) if change < 0 else ('gain', capacity['receivable'][k, region_id])
+            rows.append({'region_id': int(region_id), 'class_label': label, 'check': check, 'change_ha': change,
+                         'requested_ha': abs(change), 'available_ha': float(available),
+                         'physical_stock_ha': float(capacity['physical'][k, region_id]),
+                         'eligible_stock_ha': float(capacity['eligible'][k, region_id])})
+        gains = float(np.maximum(demand[:, region_id], 0).sum())
+        if gains > 0:
+            rows.append({'region_id': int(region_id), 'class_label': 'all_gains', 'check': 'all_gains', 'change_ha': gains,
+                         'requested_ha': gains, 'available_ha': float(capacity['any_receivable'][region_id]),
+                         'physical_stock_ha': np.nan, 'eligible_stock_ha': np.nan})
+    table = pd.DataFrame(rows, columns=['region_id', 'class_label', 'check', 'change_ha', 'requested_ha', 'available_ha',
+                                        'physical_stock_ha', 'eligible_stock_ha'])
+    table['shortfall_ha'] = np.where(table['requested_ha'] - table['available_ha'] > tolerance_ha,
+                                     table['requested_ha'] - table['available_ha'], 0.0)
+    return table
+
+def read_aligned_window(path, grid_geotransform, col, row, n_cols, n_rows):
+    """Read the block of a raster that covers columns and rows of another grid with the same cell size.
+
+    Raises:
+        NameError: if the cell sizes differ, the grids are offset by part of a cell, or the raster does not cover the block.
+    """
+    info = hb.get_raster_info_hb(path)
+    g = info['geotransform']
+    if abs(g[1] - grid_geotransform[1]) > 1e-9 * abs(g[1]) or abs(g[5] - grid_geotransform[5]) > 1e-9 * abs(g[5]):
+        raise NameError('Cell size of ' + path + ' differs from the allocation grid.')
+    col_offset = (grid_geotransform[0] + col * grid_geotransform[1] - g[0]) / g[1]
+    row_offset = (grid_geotransform[3] + row * grid_geotransform[5] - g[3]) / g[5]
+    c, r = int(round(col_offset)), int(round(row_offset))
+    if abs(col_offset - c) > 1e-6 or abs(row_offset - r) > 1e-6:
+        raise NameError(path + ' is offset from the allocation grid by part of a cell.')
+    width, height = info['raster_size']
+    if c < 0 or r < 0 or c + n_cols > width or r + n_rows > height:
+        raise NameError(path + ' does not cover the allocation grid.')
+    return hb.load_geotiff_chunk_by_cr_size(path, [c, r, n_cols, n_rows])

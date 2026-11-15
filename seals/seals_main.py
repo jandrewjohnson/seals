@@ -1,4 +1,5 @@
 import collections
+import glob
 import copy
 import logging
 import math
@@ -1601,6 +1602,153 @@ def allocations(p):
 
 
 
+def regional_demand_feasibility(p):
+    """Refuse a year's allocation when a region asks for more land than it can supply, before any zone is allocated.
+
+    Runs once per scenario and year as the parent of allocation_zones, so each year is checked after the previous year
+    allocated and before this one does: the land a year can use depends on what earlier years changed. For each region
+    it compares the net change of each class, summed from the coarse rasters allocation reads, with the land on the
+    map the year starts from, under the allocator's own rules: nodata in the base-year map, pixels changed in an
+    earlier year (the previous year's cumulative_change_happened) and the multiplicative layers of the coefficient
+    table (presence constraints, protected classes, scenario masks).
+    Only pixels whose coarse cell belongs to the region count, so land across a border cannot pay.
+
+    - A loss needs that much of the class on pixels some gaining class of the region may take.
+    - A gain, including a positive residual OtherNat, needs that much land the class may take.
+    - All of a region's gains together need that much land, each pixel counted once.
+
+    On any shortfall it writes the table and raises, naming region, class, requested and available hectares. Demand is
+    never scaled or clipped. Passing is necessary, not sufficient: it does not show that the allocator will meet the
+    targets, because gains are placed within each coarse cell in whole pixels and losses are taken by rank.
+
+    Known limits. A region with demand but no coarse cell is set to zero upstream, in convert_regional_change_to_coarse,
+    so it never reaches this check. Pixels the allocator skips because their additive score is exactly zero are counted
+    as available, so capacity can be overstated but a feasible region is never refused. A coefficient table whose
+    multiplicative layers differ between calibration blocks, or calibration_parameters_source = 'calibration_task', is
+    refused rather than checked.
+
+    The table is reused only while every input file and setting is unchanged; any change recomputes it.
+    """
+    p.regional_demand_feasibility_path = os.path.join(p.cur_dir, 'regional_demand_feasibility.csv')
+    if not p.run_this:
+        return p
+    if not getattr(p, 'regional_projections_input_path', None):
+        hb.log('regional_demand_feasibility: no regional projections for this scenario, so there are no regional totals to check.')
+        return p
+
+    lulc_path = p.lulc_simplified_paths[p.key_base_year]
+    region_ids_path = os.path.join(p.regional_change_dir, 'region_ids.tif')
+    change_paths = seals_utils.projected_coarse_change_paths(p)
+    years = [int(y) for y in (p.seals_years if hasattr(p, 'seals_years') else p.years)]
+    scenario_dir = os.path.dirname(p.cur_dir_parent_dir)
+    tile_name = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + \
+        p.model_label + '_' + p.counterfactual_label + '_{}.tif'
+    earlier_years = [y for y in years if y < int(p.year)]
+    first_year = int(p.previous_year) == int(p.key_base_year)
+    required = [lulc_path, p.aoi_ha_per_cell_fine_path, region_ids_path] + change_paths
+    if not first_year:
+        required.append(os.path.join(scenario_dir, str(p.previous_year), 'allocation_zones'))
+    missing = [path for path in required if not hb.path_exists(path)]
+    calibration_path = seals_utils.resolve_calibration_parameters_path(p)
+    if missing:
+        raise NameError('regional_demand_feasibility cannot check ' + str(p.year) + ' without: ' + ', '.join(missing))
+
+    coefficients_df = seals_utils.prepare_allocation_coefficients(p, pd.read_csv(calibration_path), calibration_path)
+    layer_names, layer_paths, layer_coefficients = seals_utils.feasibility_constraint_layers(coefficients_df, p.changing_class_labels)
+    possible_dirs = [p.intermediate_dir, p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir]
+    layer_paths = [p.get_path(path, possible_dirs=possible_dirs) for path in layer_paths]
+    missing = [path for path in layer_paths if not hb.path_exists(path)]
+    if missing:
+        raise NameError('regional_demand_feasibility cannot check ' + str(p.year) + ' without the constraint layers: ' + ', '.join(missing))
+
+    # Tiles written by earlier years, oldest first, so a tile that did not change in a later year keeps its last map.
+    tiles = []
+    for year in earlier_years:
+        tiles += [('lulc', path) for path in sorted(glob.glob(os.path.join(scenario_dir, str(year), 'allocation_zones', '*', 'allocation',
+                                                                          tile_name.format(year))))]
+    if not first_year:
+        tiles += [('locked', path) for path in sorted(glob.glob(os.path.join(
+            scenario_dir, str(p.previous_year), 'allocation_zones', '*', 'allocation', 'cumulative_change_happened.tif')))]
+
+    sources = {'lulc': lulc_path, 'ha_fine': p.aoi_ha_per_cell_fine_path, 'region_ids': region_ids_path, 'coefficients': calibration_path}
+    sources.update({'change_' + label: path for label, path in zip(p.changing_class_labels, change_paths)})
+    sources.update({'layer_' + name: path for name, path in zip(layer_names, layer_paths)})
+    sources.update({kind + '_' + str(k): path for k, (kind, path) in enumerate(tiles)})
+    settings = {'year': int(p.year), 'previous_year': int(p.previous_year), 'class_ids': [int(i) for i in p.changing_class_indices],
+                'class_labels': list(p.changing_class_labels), 'layer_names': layer_names, 'layer_coefficients': layer_coefficients.tolist(),
+                'tolerance_ha': 1e-6}
+    hb.create_directories(p.cur_dir)   # registered with creates_dir=False, so it writes into the iteration's own directory
+    provenance_path = os.path.join(p.cur_dir, 'regional_demand_feasibility_provenance.json')
+    try:
+        reuse = seals_utils.reuse_outputs_if_inputs_unchanged('regional_demand_feasibility', provenance_path, [p.regional_demand_feasibility_path],
+                                                             sources, settings)
+    except NameError as error:
+        hb.log('regional_demand_feasibility: recomputing because ' + str(error))
+        reuse = False
+
+    if reuse:
+        table = pd.read_csv(p.regional_demand_feasibility_path, encoding='utf-8-sig')
+    else:
+        ratio = seals_utils.check_fine_coarse_alignment(lulc_path, region_ids_path)
+        regions_coarse = hb.as_array(region_ids_path).astype(np.int64)
+        n_regions = int(regions_coarse.max())
+        in_region = regions_coarse > 0
+        demand = np.zeros((len(change_paths), n_regions + 1))
+        for k, path in enumerate(change_paths):
+            change = hb.as_array(path).astype(np.float64)
+            if change.shape != regions_coarse.shape or not np.all(np.isfinite(change[in_region])):
+                raise NameError('Coarse change must match the region grid and be finite inside every region: ' + path)
+            demand[k] = np.bincount(regions_coarse[in_region], weights=change[in_region], minlength=n_regions + 1)
+
+        grid = hb.get_raster_info_hb(lulc_path)
+        geotransform = grid['geotransform']
+        n_cols, n_rows = grid['raster_size']
+        tile_windows = []
+        for kind, path in tiles:
+            g = hb.get_raster_info_hb(path)
+            col = int(round((g['geotransform'][0] - geotransform[0]) / geotransform[1]))
+            row = int(round((g['geotransform'][3] - geotransform[3]) / geotransform[5]))
+            tile_windows.append((kind, path, row, col) + tuple(g['raster_size'][::-1]))
+        class_ids = [int(i) for i in p.changing_class_indices]
+        gaining = demand > 0
+        capacity = None
+        stripe = ratio * max(1, int(5e6 // max(1, n_cols * ratio)))   # bounded memory on large AOIs
+        for row in range(0, n_rows, stripe):
+            height = min(stripe, n_rows - row)
+            lulc = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
+            valid = lulc != p.lulc_ndv
+            locked = np.zeros(lulc.shape, dtype=bool)
+            for kind, path, tile_row, tile_col, tile_rows, tile_cols in tile_windows:
+                r0, r1 = max(row, tile_row), min(row + height, tile_row + tile_rows)
+                if r0 >= r1:
+                    continue
+                c0, c1 = max(0, tile_col), min(n_cols, tile_col + tile_cols)
+                block = hb.as_array(path)[r0 - tile_row:r1 - tile_row, c0 - tile_col:c1 - tile_col]
+                if kind == 'lulc':
+                    lulc[r0 - row:r1 - row, c0:c1] = block
+                else:
+                    locked[r0 - row:r1 - row, c0:c1] = block == 1
+            ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
+            region = np.repeat(np.repeat(regions_coarse[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
+            layers = np.array([seals_utils.read_aligned_window(path, geotransform, 0, row, n_cols, height) for path in layer_paths], dtype=np.float64)
+            allowed = seals_utils.placement_allowed(layers, layer_coefficients) if len(layer_paths) else np.ones((len(class_ids),) + lulc.shape, bool)
+            part = seals_utils.regional_stock_capacity(lulc, valid, locked, ha, region, class_ids, allowed, gaining, n_regions)
+            capacity = part if capacity is None else {key: capacity[key] + part[key] for key in part}
+        table = seals_utils.evaluate_regional_feasibility(demand, capacity, list(p.changing_class_labels), settings['tolerance_ha'])
+        table.insert(0, 'year', int(p.year))
+        table.to_csv(p.regional_demand_feasibility_path, encoding='utf-8-sig', index=False)
+        seals_utils.save_provenance(provenance_path, sources, settings)
+
+    short = table[table['shortfall_ha'] > 0]
+    if len(short):
+        raise NameError('regional_demand_feasibility ' + '/'.join([p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label])
+                        + ' ' + str(p.year) + ': not enough land before allocation, so nothing was allocated. '
+                        + '; '.join('region %d %s %s requested %.6g ha, available %.6g ha'
+                                    % (r.region_id, r.class_label, r.check, r.requested_ha, r.available_ha) for r in short.itertuples())
+                        + '. Table: ' + p.regional_demand_feasibility_path)
+    hb.log('regional_demand_feasibility: every region of ' + str(p.year) + ' has the land it asks for (necessary, not sufficient).')
+    return p
+
 def allocation_zones(p):
 
     # # Define the zones overwhich parallel allocation should be run
@@ -1921,53 +2069,8 @@ def allocation_zones(p):
             hb.log('Starting to read ' + calibration_parameters_path)
             df = pd.read_csv(calibration_parameters_path)
 
-            # Fail here rather than allocating with coefficients fitted for other classes.
-            # Class ids shift between schemes, so the wrong file misassigns classes silently
-            # and still produces a map.
-            scheme_labels = getattr(p, 'changing_class_labels', None)
-            if scheme_labels:
-                seals_utils.check_coefficients_match_class_scheme(
-                    df, scheme_labels, coefficients_path=calibration_parameters_path)
-            else:
-                hb.log('Skipping the coefficient scheme check: changing_class_labels is not set.')
-
-            # Rebuild the constraint block for THIS run, discarding what the file carried. We
-            # train unconstrained and allocate constrained, so the block belongs to the scenario
-            # rather than to the calibration that produced the file. water/other/othernat need no
-            # declaration -- they are derived, having no coarse budget in this configuration.
-            if scheme_labels:
-                additional_protected = seals_utils.resolve_additional_protected_class_labels(p)
-                df = seals_utils.apply_presence_constraints(
-                    df, p.all_class_labels, scheme_labels, additional_protected)
-                hb.log('Rebuilt presence constraints; protected: ' + ', '.join(
-                    seals_utils.protected_class_labels(
-                        p.all_class_labels, scheme_labels, additional_protected)))
-
-            # Point the presence constraints at this run's own layer for the year it allocates
-            # from, rather than trusting the path baked in when the coefficients were produced.
-            # That path names the calibration's project and the year it was trained to, so a
-            # file used anywhere else points at a directory that need not exist and a year that
-            # need not be the base year. A layer from after the base year also encodes land
-            # cover the run should not see.
-            # Re-root the per-project regressor layers before anything reads them. A
-            # coefficient file fitted elsewhere names that project's directories, which need
-            # not exist here; every project generates its own copies under the same relative
-            # path. Shared covariates in base_data are untouched.
-            df = seals_utils.rebase_project_paths(df, p.fine_processed_inputs_dir, p.key_base_year,
-                                                 p.base_data_dir)
-
-            df = seals_utils.resolve_constraint_layers(
-                df, p.fine_processed_inputs_dir, p.lulc_src_label,
-                p.lulc_simplification_label, p.key_base_year)
-
-            # TODO This is bad. Fix it.
-            # TODOOO, YES IT WAS A BAD IDEA YOU DUMMY.
-            # TODOOO AGAIN. Indeed, still bad.
-            year_replacement_dict = {}
-            year_replacement_dict['2014'] = p.key_base_year
-            for src, dst in year_replacement_dict.items():
-
-                df['data_location'] = df.loc[:, 'data_location'].replace({str(src): str(dst)}, regex=True)
+            # Scheme check, constraint rebuild, path re-rooting: shared with the pre-allocation stock check.
+            df = seals_utils.prepare_allocation_coefficients(p, df, calibration_parameters_path)
 
             # Refuse a coefficient file fitted on a different processing grid than this run is
             # tiled at. The calibration key is the zone's grid position with nothing recording WHICH
@@ -2388,9 +2491,8 @@ def allocation(passed_p=None):
             #     projected_coarse_change_dir = os.path.join(p.coarse_simplified_projected_ha_difference_from_previous_year_dir, p.exogenous_label, p.climate_label, p.model_label, p.counterfactual_label, str(p.year))
 
 
-            filename_end = '_' + str(p.year) + '_' + str(p.previous_year) + '_ha_diff_'  + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '.tif'
-            # filename_end = '_' + str(p.year) + '_' + str(p.previous_year) + '_ha_diff_'  + p.exogenous_label + '_' + p.climate_label + '_' + p.model_label + '_' + p.counterfactual_label + '_' + p.aggregation_method_string + '.tif'
-            projected_coarse_change_paths = [os.path.join(p.projected_coarse_change_dir, i + filename_end) for i in p.changing_class_labels]
+            # Shared with the pre-allocation stock check, so both read the same rasters.
+            projected_coarse_change_paths = seals_utils.projected_coarse_change_paths(p)
 
 
             for c, path in enumerate(projected_coarse_change_paths):

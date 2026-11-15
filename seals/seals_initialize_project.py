@@ -202,7 +202,10 @@ def build_complete_run_task_tree(p):
     p.calibration_plots_task = p.add_task(seals_main.calibration_plots, parent=p.calibration_task,                                                  run=1, skip_existing=0)
     p.combined_trained_coefficients_task = p.add_task(seals_main.combined_trained_coefficients,                                                     run=1, skip_existing=0)
     p.allocations_task = p.add_iterator(seals_main.allocations, run_in_parallel=0,                                                                  run=1, skip_existing=0)
-    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, parent=p.allocations_task, run_in_parallel=1,                             run=1, skip_existing=0)
+    # Parent of allocation_zones so each year is checked after the previous year allocated and before this one does.
+    p.regional_demand_feasibility_task = p.add_task(seals_main.regional_demand_feasibility, parent=p.allocations_task, creates_dir=False, skip_existing=0)
+    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=1, run=1, skip_existing=0,
+                                             parent=p.regional_demand_feasibility_task)
     p.allocation_change_matrix_task = p.add_task(seals_main.allocation_change_matrix, parent=p.allocation_zones_task,                               run=1, skip_existing=0)
     p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task,                                                           run=1, skip_existing=0)
     p.allocation_exclusive_task = p.add_task(seals_main.allocation_exclusive, parent=p.allocation_zones_task,                                       run=0, skip_existing=0)
@@ -242,7 +245,10 @@ def build_standard_task_tree(p):
 
     ##### ALLOCATION #####
     p.allocations_task = p.add_iterator(seals_main.allocations, skip_existing=0)
-    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, parent=p.allocations_task, skip_existing=0)
+    # Parent of allocation_zones so each year is checked after the previous year allocated and before this one does.
+    p.regional_demand_feasibility_task = p.add_task(seals_main.regional_demand_feasibility, parent=p.allocations_task, creates_dir=False, skip_existing=0)
+    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, skip_existing=0,
+                                             parent=p.regional_demand_feasibility_task)
     p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task, skip_existing=0)
 
     ##### STITCH ZONES #####
@@ -325,7 +331,10 @@ def build_standard_with_postprocessing_task_tree(p):
 
     ##### ALLOCATION #####
     p.allocations_task = p.add_iterator(seals_main.allocations, skip_existing=1)
-    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, parent=p.allocations_task, skip_existing=1)
+    # Parent of allocation_zones so each year is checked after the previous year allocated and before this one does.
+    p.regional_demand_feasibility_task = p.add_task(seals_main.regional_demand_feasibility, parent=p.allocations_task, creates_dir=False, skip_existing=0)
+    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, skip_existing=1,
+                                             parent=p.regional_demand_feasibility_task)
     p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task, skip_existing=1)
 
     ##### STITCH ZONES #####
@@ -386,7 +395,9 @@ def build_custom_coarse_algorithm_task_tree(p):
 
     ##### ALLOCATION #####
     p.allocations_task = p.add_iterator(seals_main.allocations)
-    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, parent=p.allocations_task)
+    # Parent of allocation_zones so each year is checked after the previous year allocated and before this one does.
+    p.regional_demand_feasibility_task = p.add_task(seals_main.regional_demand_feasibility, parent=p.allocations_task, creates_dir=False, skip_existing=0)
+    p.allocation_zones_task = p.add_iterator(seals_main.allocation_zones, run_in_parallel=p.run_in_parallel, parent=p.regional_demand_feasibility_task)
     p.allocation_task = p.add_task(seals_main.allocation, parent=p.allocation_zones_task, skip_existing=1)
 
     ##### STITCH ZONES #####
