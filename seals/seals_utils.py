@@ -2777,3 +2777,195 @@ def summarize_regional_transitions(matrix, stock_before, stock_after, intended, 
                             'intended_net_ha': target, 'realized_minus_intended_ha': gain - loss - target,
                             'disallowed_gain_ha': violation})
     return pd.DataFrame(transitions), pd.DataFrame(summary)
+
+def sum_fine_classes_to_coarse(lulc_array, ha_array, class_ids, ratio, lulc_ndv):
+    """Sum fine pixel hectares per class into coarse cells, so stocks are areas and never modal or averaged codes.
+
+    Args:
+        lulc_array (ndarray): fine class codes, shape a whole number of coarse cells.
+        ha_array (ndarray): hectares of each fine pixel, same shape.
+        class_ids (list): class codes to sum.
+        ratio (int): fine pixels along one side of a coarse cell.
+        lulc_ndv (int): the nodata code of lulc_array; those pixels count in no stock.
+
+    Returns:
+        tuple: class hectares (len(class_ids), coarse rows, coarse cols) and valid hectares (coarse rows, coarse cols).
+    """
+    from hazelbean.calculation_core.aspect_ratio_array_functions import upscale_retaining_sum
+    valid = lulc_array != lulc_ndv
+    if not np.all(np.isfinite(ha_array[valid])) or np.any(ha_array[valid] < 0):
+        raise NameError('Pixel hectares under valid land-cover pixels must be finite and >= 0.')
+    valid_ha = np.ascontiguousarray(np.where(valid, ha_array, 0.0), dtype=np.float64)
+    class_ha = np.stack([upscale_retaining_sum(np.ascontiguousarray(np.where(lulc_array == class_id, valid_ha, 0.0)), ratio)
+                         for class_id in class_ids])
+    return class_ha, upscale_retaining_sum(valid_ha, ratio)
+
+def route_residual_to_adjacent_cells(targets, capacity, region_ids, weights, neighborhood, zero_weight_cells):
+    """Keep each coarse cell's expansion targets where they fit, and move only the excess to nearby cells of its region.
+
+    In each cell, the targets of all classes share one eligible capacity. Where they exceed it, every class keeps the
+    same fraction of its target, and the rest is the residual. The residual moves outwards ring by ring. Ring n of a
+    source cell is every cell n steps away along cells of the same region, so it never crosses into another region
+    or through a cell with no region, and a zero-capacity cell of the same region passes the path on. All sources
+    take a ring at the same time. Inside a ring, the cells with positive weight for the class are offered the residual
+    in proportion to their weight. When zero_weight_cells is 'after_positive', zero-weight cells of the same ring are
+    then offered what is left, in proportion to their spare capacity. Where offers exceed a cell's spare capacity,
+    each is cut by the same fraction, so the result does not depend on class or cell order. Residual that no
+    reachable cell can take stays unplaced at its source cell, and the caller decides what to do with it. The stopping tolerance, 1e-9 of the largest capacity,
+    only ends the loop: whatever residual is left, however small, is reported in 'unplaced', and hectares are
+    checked to be conserved per region and class to 1e-9 ha.
+
+    Args:
+        targets (ndarray): (n_classes, rows, cols) expansion hectares, all >= 0.
+        capacity (ndarray): (rows, cols) eligible hectares a cell can give to all classes together, >= 0.
+        region_ids (ndarray): (rows, cols) integer region ids; 0 is no region.
+        weights (ndarray): (n_classes, rows, cols) preference for receiving residual, >= 0.
+        neighborhood (str): 'rook' (4 neighbours) or 'queen' (8 neighbours).
+        zero_weight_cells (str): 'after_positive' or 'never'.
+
+    Returns:
+        dict: 'targets' the routed targets, 'initial' the part kept in place, 'unplaced' residual left at its source
+            cell, all (n_classes, rows, cols), and 'rings' the furthest ring that received residual.
+
+    Raises:
+        NameError: on negative inputs, mismatched shapes, unknown options, targets outside every region, or if
+            routing failed to conserve hectares per region and class.
+    """
+    targets = np.asarray(targets, dtype=np.float64)
+    capacity = np.asarray(capacity, dtype=np.float64)
+    weights = np.asarray(weights, dtype=np.float64)
+    region_ids = np.asarray(region_ids)
+    if targets.ndim != 3 or targets.shape != weights.shape or targets.shape[1:] != capacity.shape or capacity.shape != region_ids.shape:
+        raise NameError('targets and weights must be (n_classes, rows, cols), and capacity and region_ids (rows, cols).')
+    if not (np.all(np.isfinite(targets)) and np.all(np.isfinite(capacity)) and np.all(np.isfinite(weights))):
+        raise NameError('targets, capacity and weights must be finite. NaN or infinite capacity is not usable land.')
+    if np.any(targets < 0) or np.any(capacity < 0) or np.any(weights < 0):
+        raise NameError('targets, capacity and weights must be >= 0. Signed targets need a contraction rule first.')
+    offsets = {'rook': [(-1, 0), (1, 0), (0, -1), (0, 1)],
+               'queen': [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]}
+    if neighborhood not in offsets:
+        raise NameError('neighborhood must be rook or queen, not ' + str(neighborhood))
+    if zero_weight_cells not in ('after_positive', 'never'):
+        raise NameError('zero_weight_cells must be after_positive or never, not ' + str(zero_weight_cells))
+    if np.any(targets.sum(axis=0)[region_ids == 0] > 0):
+        raise NameError('Expansion targets in cells outside every region.')
+
+    epsilon = 1e-9 * max(1.0, float(capacity.max(initial=0.0)))
+    demand = targets.sum(axis=0)
+    kept_fraction = np.where(demand > capacity, capacity / np.where(demand > 0, demand, 1.0), 1.0)
+    initial = targets * kept_fraction
+    residual = targets - initial
+    spare = np.maximum(capacity - initial.sum(axis=0), 0.0)
+    routed = initial.copy()
+    n_classes, n_rows, n_cols = targets.shape
+
+    sources = [(r, c) for r, c in zip(*np.nonzero(residual.sum(axis=0) > epsilon))]
+    visited = {source: {source} for source in sources}
+    frontier = {source: [source] for source in sources}
+    furthest_ring = 0
+    ring = 0
+    while sources:
+        ring += 1
+        ring_cells = {}
+        for source in sources:
+            region = region_ids[source]
+            next_frontier = []
+            for r, c in frontier[source]:
+                for dr, dc in offsets[neighborhood]:
+                    cell = (r + dr, c + dc)
+                    if 0 <= cell[0] < n_rows and 0 <= cell[1] < n_cols and cell not in visited[source] and region_ids[cell] == region:
+                        visited[source].add(cell)
+                        next_frontier.append(cell)
+            frontier[source] = next_frontier
+            ring_cells[source] = next_frontier
+        tiers = ['positive', 'zero'] if zero_weight_cells == 'after_positive' else ['positive']
+        for tier in tiers:
+            for _ in range(n_rows * n_cols + 1):
+                offers = []
+                for source in sources:
+                    for k in range(n_classes):
+                        if residual[k][source] <= epsilon:
+                            continue
+                        cells = [cell for cell in ring_cells[source] if spare[cell] > epsilon
+                                 and ((weights[k][cell] > 0) if tier == 'positive' else (weights[k][cell] == 0))]
+                        if not cells:
+                            continue
+                        shares = np.array([weights[k][cell] if tier == 'positive' else spare[cell] for cell in cells])
+                        for cell, share in zip(cells, shares / shares.sum()):
+                            offers.append((source, k, cell, residual[k][source] * share))
+                if not offers:
+                    break
+                offered = {}
+                for _, _, cell, amount in offers:
+                    offered[cell] = offered.get(cell, 0.0) + amount
+                accepted_fraction = {cell: min(1.0, spare[cell] / amount) for cell, amount in offered.items()}
+                for source, k, cell, amount in offers:
+                    accepted = amount * accepted_fraction[cell]
+                    routed[k][cell] += accepted
+                    residual[k][source] -= accepted
+                    furthest_ring = max(furthest_ring, ring)
+                for cell, amount in offered.items():
+                    spare[cell] = max(spare[cell] - amount * accepted_fraction[cell], 0.0)
+        sources = [source for source in sources if residual[:, source[0], source[1]].sum() > epsilon and frontier[source]]
+
+    unplaced = residual
+    for region in np.unique(region_ids[region_ids != 0]):
+        in_region = region_ids == region
+        before = targets[:, in_region].sum(axis=1)
+        after = routed[:, in_region].sum(axis=1) + unplaced[:, in_region].sum(axis=1)
+        if not np.allclose(before, after, rtol=1e-12, atol=1e-9):
+            raise NameError('Routing did not conserve hectares in region ' + str(region) + ': ' + str(before) + ' vs ' + str(after))
+    return {'targets': routed, 'initial': initial, 'unplaced': unplaced, 'rings': furthest_ring}
+
+def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids, gain_weights, loss_weights, neighborhood, zero_weight_cells):
+    """Turn signed coarse targets into budgets each cell can pay from its own land, moving only the excess to nearby cells.
+
+    Losses are placed first. A class cannot lose more hectares in a cell than it holds there, so the part of a loss
+    above the class's stock in that cell moves outwards to cells of the same region that still hold the class, split
+    within a ring by loss_weights. Gains are placed second. Each cell may gain only what it loses, so the hectares
+    lost in a cell are that cell's capacity for gains, shared by all gaining classes, and the
+    part of the gains above it moves outwards the same way, split within a ring by each class's own gain_weights
+    (for example the LuccME preference signal), not by capacity. Each class's gain and loss are then netted per cell.
+
+    When a region's gains and losses balance and nothing is left unplaced, every cell's budgets sum to zero, because
+    no cell gains more than it loses and the totals are equal. Hectares that no reachable cell can take are reported
+    at their source cell, never scaled away.
+
+    Args:
+        signed_targets (ndarray): (n_classes, rows, cols) net hectares per class and coarse cell, gains positive.
+        class_ha (ndarray): (n_classes, rows, cols) hectares of each class in each coarse cell, summed from the fine map.
+        region_ids (ndarray): (rows, cols) integer region ids; 0 is no region.
+        gain_weights (ndarray): (n_classes, rows, cols) each class's preference for receiving moved gains, >= 0.
+        loss_weights (ndarray): (n_classes, rows, cols) each class's preference for receiving moved losses, >= 0.
+        neighborhood (str): 'rook' or 'queen', as in route_residual_to_adjacent_cells.
+        zero_weight_cells (str): 'after_positive' or 'never', as in route_residual_to_adjacent_cells.
+
+    Returns:
+        dict: 'budgets' (n_classes, rows, cols) the signed hectares to allocate; 'unplaced_loss' and 'unplaced_gain'
+            (n_classes, rows, cols) hectares left at their source cell; 'cell_balance' (rows, cols) the sum of each
+            cell's budgets, positive where the cell gains more than it loses.
+
+    Raises:
+        NameError: on mismatched shapes, non-finite values or negative stocks, and as route_residual_to_adjacent_cells.
+    """
+    signed_targets = np.asarray(signed_targets, dtype=np.float64)
+    class_ha = np.asarray(class_ha, dtype=np.float64)
+    gain_weights = np.asarray(gain_weights, dtype=np.float64)
+    loss_weights = np.asarray(loss_weights, dtype=np.float64)
+    if signed_targets.ndim != 3 or not (signed_targets.shape == class_ha.shape == gain_weights.shape == loss_weights.shape):
+        raise NameError('signed_targets, class_ha, gain_weights and loss_weights must all be (n_classes, rows, cols).')
+    if not (np.all(np.isfinite(signed_targets)) and np.all(np.isfinite(class_ha))) or np.any(class_ha < 0):
+        raise NameError('signed_targets must be finite, and class_ha finite and >= 0.')
+    losses = np.maximum(-signed_targets, 0.0)
+    gains = np.maximum(signed_targets, 0.0)
+    placed_losses = np.zeros_like(losses)
+    unplaced_loss = np.zeros_like(losses)
+    for k in range(losses.shape[0]):
+        if np.any(losses[k] > 0):
+            routed = route_residual_to_adjacent_cells(losses[k:k + 1], class_ha[k], region_ids, loss_weights[k:k + 1], neighborhood, zero_weight_cells)
+            placed_losses[k] = routed['targets'][0]
+            unplaced_loss[k] = routed['unplaced'][0]
+    gain_capacity = placed_losses.sum(axis=0)
+    routed = route_residual_to_adjacent_cells(gains, gain_capacity, region_ids, gain_weights, neighborhood, zero_weight_cells)
+    budgets = routed['targets'] - placed_losses
+    return {'budgets': budgets, 'unplaced_loss': unplaced_loss, 'unplaced_gain': routed['unplaced'], 'cell_balance': budgets.sum(axis=0)}

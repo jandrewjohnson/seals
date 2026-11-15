@@ -1733,6 +1733,116 @@ def regional_demand_feasibility(p):
     hb.log('regional_demand_feasibility: every region of ' + str(p.year) + ' has the land it asks for (necessary, not sufficient).')
     return p
 
+def adjacent_coarse_budgets(p):
+    """Move the part of each coarse cell's budget that the cell cannot hold to nearby cells of its region.
+
+    Opt-in: register it under regional_demand_feasibility before allocation_zones. When it runs, allocation_zones reads
+    the routed budgets (p.projected_coarse_change_dir points here); when it is skipped, allocation reads the coarse
+    budgets as given. Regional totals are unchanged and no donor rule is added.
+
+    For the year's accepted starting map (base-year map plus earlier years' tiles, earlier changes locked by the previous
+    year's cumulative_change_happened) it sums, per coarse cell, the hectares of each class that may still change. It
+    then calls seals_utils.route_signed_budgets_to_adjacent_cells: a class cannot lose more in a cell than that open
+    stock, a cell cannot gain more than it loses, and the excess moves ring by ring to cells of the same region, losses
+    weighted by where the class is and gains by p.adjacent_gain_weight_paths (label -> coarse raster, for example a
+    LuccME preference; uniform when not given).
+
+    Writes one routed raster per class, named as allocation expects, and adjacent_coarse_budgets.csv per region and
+    class: coarse input, routed budget, and gain and loss left unplaced. Raises, after writing the table, if anything is
+    left unplaced: demand is never shrunk. The outputs are reused only while every input and setting is unchanged.
+    """
+    p.unrouted_coarse_change_dir = getattr(p, 'unrouted_coarse_change_dir', None) or p.projected_coarse_change_dir
+    p.adjacent_coarse_budgets_path = os.path.join(p.cur_dir, 'adjacent_coarse_budgets.csv')
+    if not p.run_this:
+        return p
+    if not getattr(p, 'regional_projections_input_path', None):
+        hb.log('adjacent_coarse_budgets: no regional projections for this scenario, so the coarse budgets are used as given.')
+        return p
+    unrouted = p.unrouted_coarse_change_dir
+    p.projected_coarse_change_dir = unrouted
+    change_paths = seals_utils.projected_coarse_change_paths(p)
+    routed_paths = [os.path.join(p.cur_dir, os.path.basename(path)) for path in change_paths]
+    lulc_path = p.lulc_simplified_paths[p.key_base_year]
+    region_ids_path = os.path.join(p.regional_change_dir, 'region_ids.tif')
+    weight_paths = getattr(p, 'adjacent_gain_weight_paths', None) or {}
+    years = [int(y) for y in (p.seals_years if hasattr(p, 'seals_years') else p.years)]
+    scenario_dir = os.path.dirname(p.cur_dir_parent_dir)
+    tile_name = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + \
+        p.model_label + '_' + p.counterfactual_label + '_{}.tif'
+    first_year = int(p.previous_year) == int(p.key_base_year)
+    required = [lulc_path, p.aoi_ha_per_cell_fine_path, region_ids_path] + change_paths + list(weight_paths.values())
+    missing = [path for path in required if not hb.path_exists(path)]
+    if missing:
+        raise NameError('adjacent_coarse_budgets cannot route ' + str(p.year) + ' without: ' + ', '.join(missing))
+    tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, [y for y in years if y < int(p.year)],
+                                                 None if first_year else p.previous_year)
+    labels = list(p.changing_class_labels)
+    sources = {'lulc': lulc_path, 'ha_fine': p.aoi_ha_per_cell_fine_path, 'region_ids': region_ids_path}
+    sources.update({'change_' + label: path for label, path in zip(labels, change_paths)})
+    sources.update({'gain_weight_' + label: path for label, path in weight_paths.items()})
+    sources.update({kind + '_' + str(k): path for k, (kind, path) in enumerate(tiles)})
+    settings = {'year': int(p.year), 'class_ids': [int(i) for i in p.changing_class_indices], 'class_labels': labels,
+                'neighborhood': getattr(p, 'adjacency_neighborhood', 'queen'),
+                'zero_weight_cells': getattr(p, 'adjacency_zero_weight_cells', 'after_positive'), 'tolerance_ha': 1e-6}
+    hb.create_directories(p.cur_dir)
+    provenance_path = os.path.join(p.cur_dir, 'adjacent_coarse_budgets_provenance.json')
+    try:
+        reuse = seals_utils.reuse_outputs_if_inputs_unchanged('adjacent_coarse_budgets', provenance_path, routed_paths + [p.adjacent_coarse_budgets_path],
+                                                             sources, settings)
+    except NameError as error:
+        hb.log('adjacent_coarse_budgets: recomputing because ' + str(error))
+        reuse = False
+    if not reuse:
+        ratio = seals_utils.check_fine_coarse_alignment(lulc_path, region_ids_path)
+        regions = hb.as_array(region_ids_path).astype(np.int64)
+        n_rows_coarse, n_cols_coarse = regions.shape
+        cells = np.arange(1, regions.size + 1).reshape(regions.shape)
+        signed = np.array([np.where(regions > 0, hb.as_array(path).astype(np.float64), 0.0) for path in change_paths])
+        grid = hb.get_raster_info_hb(lulc_path)
+        n_cols, n_rows = grid['raster_size']
+        windows = seals_utils.allocation_tile_windows(tiles, grid['geotransform'])
+        class_ids = settings['class_ids']
+        open_stock = np.zeros((len(class_ids), regions.size + 1))
+        stripe = ratio * max(1, int(5e6 // max(1, n_cols * ratio)))
+        for row in range(0, n_rows, stripe):
+            height = min(stripe, n_rows - row)
+            lulc = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
+            valid = lulc != p.lulc_ndv
+            locked = np.zeros(lulc.shape, dtype=bool)
+            seals_utils.paste_allocation_tiles(lulc, locked, row, windows)
+            ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
+            cell = np.repeat(np.repeat(cells[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
+            nothing = np.zeros((len(class_ids), regions.size + 1), dtype=bool)
+            part = seals_utils.regional_stock_capacity(lulc, valid, locked, ha, cell, class_ids, np.ones((len(class_ids),) + lulc.shape, bool),
+                                                       nothing, regions.size)
+            open_stock += part['eligible']
+        open_stock = open_stock[:, 1:].reshape(len(class_ids), n_rows_coarse, n_cols_coarse)
+        gain_weights = np.array([hb.as_array(weight_paths[label]).astype(np.float64) if label in weight_paths else np.ones(regions.shape)
+                                 for label in labels])
+        routed = seals_utils.route_signed_budgets_to_adjacent_cells(signed, open_stock, regions, gain_weights, open_stock,
+                                                                    settings['neighborhood'], settings['zero_weight_cells'])
+        for k, path in enumerate(routed_paths):
+            hb.save_array_as_geotiff(routed['budgets'][k], path, region_ids_path, data_type=7, ndv=-9999.0)
+        rows = []
+        for region_id in [int(i) for i in np.unique(regions) if i > 0]:
+            inside = regions == region_id
+            for k, label in enumerate(labels):
+                rows.append({'region_id': region_id, 'class_label': label, 'coarse_input_ha': float(signed[k][inside].sum()),
+                             'budget_ha': float(routed['budgets'][k][inside].sum()),
+                             'unplaced_gain_ha': float(routed['unplaced_gain'][k][inside].sum()),
+                             'unplaced_loss_ha': float(routed['unplaced_loss'][k][inside].sum()),
+                             'cells_changed': int((np.abs(routed['budgets'][k] - signed[k]) > settings['tolerance_ha'])[inside].sum())})
+        pd.DataFrame(rows).to_csv(p.adjacent_coarse_budgets_path, encoding='utf-8-sig', index=False)
+        seals_utils.save_provenance(provenance_path, sources, settings)
+    table = pd.read_csv(p.adjacent_coarse_budgets_path, encoding='utf-8-sig')
+    left = table[(table['unplaced_gain_ha'] > settings['tolerance_ha']) | (table['unplaced_loss_ha'] > settings['tolerance_ha'])]
+    if len(left):
+        raise NameError('adjacent_coarse_budgets ' + str(p.year) + ': no cell of the region can take part of the budget, so nothing was allocated. '
+                        + '; '.join('region %d %s gain %.6g ha, loss %.6g ha unplaced' % (r.region_id, r.class_label, r.unplaced_gain_ha, r.unplaced_loss_ha)
+                                    for r in left.itertuples()) + '. Table: ' + p.adjacent_coarse_budgets_path)
+    p.projected_coarse_change_dir = p.cur_dir
+    return p
+
 def regional_transitions(p):
     """Report, per region, the hectares each class passed to each other class in a year, after that year allocated.
 
