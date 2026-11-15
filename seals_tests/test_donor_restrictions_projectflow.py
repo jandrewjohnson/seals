@@ -9,8 +9,9 @@ it loads the same coarse rasters, layers and coefficients and writes the tile al
 
 Region 1 (left half): each coarse cell holds 4 forest, 4 pasture (grassland), 5 OtherNat and 3 cropland pixels of 1 ha.
 GTAP asks cropland +10 and OtherNat -10, forest and pasture 0: OtherNat is the intended donor. Region 2 (right half)
-asks cropland +4 and pasture -4: pasture is the intended donor there, and each of its coarse cells holds pasture. A preference layer, standing in for LuccME, ranks
-forest above pasture above OtherNat for every receiver. Every restriction below is a synthetic fixture setting."""
+asks cropland +4 and pasture -4: pasture is the intended donor there, and each of its coarse cells holds pasture.
+A preference layer, standing in for LuccME, ranks forest above pasture above OtherNat for every receiver.
+Every restriction below is a synthetic fixture setting."""
 import os
 
 import numpy as np
