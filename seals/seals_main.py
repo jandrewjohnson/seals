@@ -1666,14 +1666,7 @@ def regional_demand_feasibility(p):
     if missing:
         raise NameError('regional_demand_feasibility cannot check ' + str(p.year) + ' without the constraint layers: ' + ', '.join(missing))
 
-    # Tiles written by earlier years, oldest first, so a tile that did not change in a later year keeps its last map.
-    tiles = []
-    for year in earlier_years:
-        tiles += [('lulc', path) for path in sorted(glob.glob(os.path.join(scenario_dir, str(year), 'allocation_zones', '*', 'allocation',
-                                                                          tile_name.format(year))))]
-    if not first_year:
-        tiles += [('locked', path) for path in sorted(glob.glob(os.path.join(
-            scenario_dir, str(p.previous_year), 'allocation_zones', '*', 'allocation', 'cumulative_change_happened.tif')))]
+    tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, earlier_years, None if first_year else p.previous_year)
 
     sources = {'lulc': lulc_path, 'ha_fine': p.aoi_ha_per_cell_fine_path, 'region_ids': region_ids_path, 'coefficients': calibration_path}
     sources.update({'change_' + label: path for label, path in zip(p.changing_class_labels, change_paths)})
@@ -1708,12 +1701,7 @@ def regional_demand_feasibility(p):
         grid = hb.get_raster_info_hb(lulc_path)
         geotransform = grid['geotransform']
         n_cols, n_rows = grid['raster_size']
-        tile_windows = []
-        for kind, path in tiles:
-            g = hb.get_raster_info_hb(path)
-            col = int(round((g['geotransform'][0] - geotransform[0]) / geotransform[1]))
-            row = int(round((g['geotransform'][3] - geotransform[3]) / geotransform[5]))
-            tile_windows.append((kind, path, row, col) + tuple(g['raster_size'][::-1]))
+        tile_windows = seals_utils.allocation_tile_windows(tiles, geotransform)
         class_ids = [int(i) for i in p.changing_class_indices]
         gaining = demand > 0
         capacity = None
@@ -1723,16 +1711,7 @@ def regional_demand_feasibility(p):
             lulc = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
             valid = lulc != p.lulc_ndv
             locked = np.zeros(lulc.shape, dtype=bool)
-            for kind, path, tile_row, tile_col, tile_rows, tile_cols in tile_windows:
-                r0, r1 = max(row, tile_row), min(row + height, tile_row + tile_rows)
-                if r0 >= r1:
-                    continue
-                c0, c1 = max(0, tile_col), min(n_cols, tile_col + tile_cols)
-                block = hb.as_array(path)[r0 - tile_row:r1 - tile_row, c0 - tile_col:c1 - tile_col]
-                if kind == 'lulc':
-                    lulc[r0 - row:r1 - row, c0:c1] = block
-                else:
-                    locked[r0 - row:r1 - row, c0:c1] = block == 1
+            seals_utils.paste_allocation_tiles(lulc, locked, row, tile_windows)
             ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
             region = np.repeat(np.repeat(regions_coarse[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
             layers = np.array([seals_utils.read_aligned_window(path, geotransform, 0, row, n_cols, height) for path in layer_paths], dtype=np.float64)
@@ -1752,6 +1731,105 @@ def regional_demand_feasibility(p):
                                     % (r.region_id, r.class_label, r.check, r.requested_ha, r.available_ha) for r in short.itertuples())
                         + '. Table: ' + p.regional_demand_feasibility_path)
     hb.log('regional_demand_feasibility: every region of ' + str(p.year) + ' has the land it asks for (necessary, not sufficient).')
+    return p
+
+def regional_transitions(p):
+    """Report, per region, the hectares each class passed to each other class in a year, after that year allocated.
+
+    Runs under regional_demand_feasibility, after allocation_zones, so it sees the year's finished tiles. The starting
+    map is the accepted map: the base-year map with every earlier year's tiles laid over it, oldest first, as
+    allocation finds them. The produced map adds this year's tiles. Both are read on the base-year map's grid, so a
+    pixel is counted once however the tiles overlap. A pixel counts when it has data in both maps and its coarse cell
+    belongs to a region; pixels that lose or gain data are reported apart, as nodata_changed_ha.
+
+    Writes regional_transitions.csv (region, source class, destination class, hectares, diagonal included) and
+    regional_transitions_summary.csv (per region and class: before and after stock, unchanged, gross gain and loss,
+    realized net, the intended net fed to the allocator, and the difference). Row sums must equal the starting stock
+    and column sums the produced stock, or it raises. Donor violations are reported only when explicit rules are given
+    in p.regional_transitions_allowed_path; none are assumed. It reads maps and reports; it changes nothing.
+    """
+    p.regional_transitions_path = os.path.join(p.cur_dir, 'regional_transitions.csv')
+    p.regional_transitions_summary_path = os.path.join(p.cur_dir, 'regional_transitions_summary.csv')
+    if not p.run_this:
+        return p
+    if not getattr(p, 'regional_projections_input_path', None):
+        hb.log('regional_transitions: no regional projections for this scenario, so there are no regions to report.')
+        return p
+
+    lulc_path = p.lulc_simplified_paths[p.key_base_year]
+    region_ids_path = os.path.join(p.regional_change_dir, 'region_ids.tif')
+    change_paths = seals_utils.projected_coarse_change_paths(p)
+    rules_path = getattr(p, 'regional_transitions_allowed_path', None) or None
+    years = [int(y) for y in (p.seals_years if hasattr(p, 'seals_years') else p.years)]
+    scenario_dir = os.path.dirname(p.cur_dir_parent_dir)
+    tile_name = 'lulc_' + p.lulc_src_label + '_' + p.lulc_simplification_label + '_' + p.exogenous_label + '_' + p.climate_label + '_' + \
+        p.model_label + '_' + p.counterfactual_label + '_{}.tif'
+    required = [lulc_path, p.aoi_ha_per_cell_fine_path, region_ids_path, os.path.join(p.cur_dir_parent_dir, 'allocation_zones')] + change_paths
+    required += [rules_path] if rules_path else []
+    missing = [path for path in required if not hb.path_exists(path)]
+    if missing:
+        raise NameError('regional_transitions cannot report ' + str(p.year) + ' without: ' + ', '.join(missing))
+
+    before_tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, [y for y in years if y < int(p.year)], None)
+    after_tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, [y for y in years if y <= int(p.year)], None)
+    class_ids = [int(i) for i in p.all_class_indices]
+    class_labels = list(p.all_class_labels)
+    sources = {'lulc': lulc_path, 'ha_fine': p.aoi_ha_per_cell_fine_path, 'region_ids': region_ids_path}
+    sources.update({'change_' + label: path for label, path in zip(p.changing_class_labels, change_paths)})
+    sources.update({'tile_' + str(k): path for k, (_, path) in enumerate(after_tiles)})
+    if rules_path:
+        sources['allowed_transitions'] = rules_path
+    settings = {'year': int(p.year), 'previous_year': int(p.previous_year), 'class_ids': class_ids, 'class_labels': class_labels,
+                'changing_class_labels': list(p.changing_class_labels), 'n_before_tiles': len(before_tiles), 'tolerance_ha': 1e-6}
+    outputs = [p.regional_transitions_path, p.regional_transitions_summary_path]
+    hb.create_directories(p.cur_dir)
+    provenance_path = os.path.join(p.cur_dir, 'regional_transitions_provenance.json')
+    try:
+        if seals_utils.reuse_outputs_if_inputs_unchanged('regional_transitions', provenance_path, outputs, sources, settings):
+            return p
+    except NameError as error:
+        hb.log('regional_transitions: recomputing because ' + str(error))
+
+    allowed = seals_utils.read_allowed_transitions(rules_path, class_labels) if rules_path else None
+    ratio = seals_utils.check_fine_coarse_alignment(lulc_path, region_ids_path)
+    regions_coarse = hb.as_array(region_ids_path).astype(np.int64)
+    n_regions = int(regions_coarse.max())
+    in_region = regions_coarse > 0
+    intended = {label: np.bincount(regions_coarse[in_region], weights=hb.as_array(path).astype(np.float64)[in_region], minlength=n_regions + 1)
+                for label, path in zip(p.changing_class_labels, change_paths)}
+    grid = hb.get_raster_info_hb(lulc_path)
+    geotransform = grid['geotransform']
+    n_cols, n_rows = grid['raster_size']
+    before_windows = seals_utils.allocation_tile_windows(before_tiles, geotransform)
+    after_windows = seals_utils.allocation_tile_windows(after_tiles, geotransform)
+    n = len(class_ids)
+    matrix = np.zeros((n_regions + 1, n, n))
+    stock_before, stock_after, nodata_changed = np.zeros((n_regions + 1, n)), np.zeros((n_regions + 1, n)), np.zeros(n_regions + 1)
+    stripe = ratio * max(1, int(5e6 // max(1, n_cols * ratio)))
+    for row in range(0, n_rows, stripe):
+        height = min(stripe, n_rows - row)
+        base = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
+        before, after = base.copy(), base.copy()
+        seals_utils.paste_allocation_tiles(before, None, row, before_windows)
+        seals_utils.paste_allocation_tiles(after, None, row, after_windows)
+        ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
+        region = np.repeat(np.repeat(regions_coarse[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
+        valid = (before != p.lulc_ndv) & (after != p.lulc_ndv)
+        flipped = ((before != p.lulc_ndv) != (after != p.lulc_ndv)) & (region > 0)
+        nodata_changed += np.bincount(region[flipped], weights=ha[flipped], minlength=n_regions + 1)
+        matrix += seals_utils.regional_transition_hectares(before, after, ha, region, valid, class_ids, n_regions)
+        for k, class_id in enumerate(class_ids):
+            for stock, array in ((stock_before, before), (stock_after, after)):
+                mask = valid & (region > 0) & (array == class_id)
+                stock[:, k] += np.bincount(region[mask], weights=ha[mask], minlength=n_regions + 1)
+    transitions, summary = seals_utils.summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed,
+                                                                      settings['tolerance_ha'])
+    summary['nodata_changed_ha'] = summary['region_id'].map(lambda r: float(nodata_changed[r]))
+    for table in (transitions, summary):
+        table.insert(0, 'year', int(p.year))
+    transitions.to_csv(p.regional_transitions_path, encoding='utf-8-sig', index=False)
+    summary.to_csv(p.regional_transitions_summary_path, encoding='utf-8-sig', index=False)
+    seals_utils.save_provenance(provenance_path, sources, settings)
     return p
 
 def allocation_zones(p):
