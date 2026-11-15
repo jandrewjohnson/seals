@@ -3,7 +3,7 @@ import hazelbean as hb
 from seals import seals_initialize_project
 
 # The projection half of the complete tree. A calibration run fits coefficients and stops, so its caller skips these.
-projection_task_names = ['coarse_change', 'coarse_extraction', 'coarse_simplified_proportion', 'coarse_interpolated_states', 'coarse_simplified_ha', 'coarse_simplified_ha_difference_from_previous_year', 'regional_change', 'allocations', 'allocation_zones', 'allocation', 'stitched_lulc_simplified_scenarios', 'visualization', 'lulc_pngs']
+projection_task_names = ['coarse_change', 'coarse_extraction', 'coarse_simplified_proportion', 'coarse_interpolated_states', 'coarse_simplified_ha', 'coarse_simplified_ha_difference_from_previous_year', 'regional_change', 'allocations', 'regional_demand_feasibility', 'allocation_zones', 'allocation', 'stitched_lulc_simplified_scenarios', 'visualization', 'lulc_pngs']
 
 
 def build_task_tree(p):
