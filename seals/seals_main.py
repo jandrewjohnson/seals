@@ -1628,7 +1628,12 @@ def regional_demand_feasibility(p):
     refused rather than checked.
 
     The table is reused only while every input file and setting is unchanged; any change recomputes it.
+
+    It is registered as an iterator of one iteration, the year it was given, because ProjectFlow sets the directory of
+    a task under a plain task only once: allocation_zones under it would then allocate every year in the first year's
+    directory. Under an iterator each child gets the year's directory again on every iteration.
     """
+    p.iterator_replacements = {'cur_dir_parent_dir': [p.cur_dir_parent_dir]}
     p.regional_demand_feasibility_path = os.path.join(p.cur_dir, 'regional_demand_feasibility.csv')
     if not p.run_this:
         return p

@@ -17,6 +17,7 @@ IDS = [1, 2, 3, 4, 5]
 ALL_LABELS = LABELS + ['water', 'other']
 WATER, NDV = 6, 255
 REACHED = []
+DIRS = {}
 TILES = {}
 
 def write_raster(path, array, cell_size, ndv, data_type):
@@ -94,6 +95,7 @@ def allocation_stand_in(p):
     """Stand-in for allocation_zones: records that allocation was reached and writes the year's tile like allocation does."""
     if p.run_this:
         REACHED.append(int(p.year))
+        DIRS[int(p.year)] = p.cur_dir
         if int(p.year) in TILES:
             tile_dir = os.path.join(p.cur_dir_parent_dir, 'allocation_zones', '0_0', 'allocation')
             after, cumulative = TILES[int(p.year)]
@@ -122,7 +124,7 @@ def run(project_dir, paths):
     p.feasibility_test_years = paths['years']
     p.feasibility_test_change_dirs = paths['change_dirs']
     iterator = p.add_iterator(scenario_years)
-    check = p.add_task(seals_main.regional_demand_feasibility, parent=iterator, creates_dir=False, skip_existing=0)
+    check = p.add_iterator(seals_main.regional_demand_feasibility, parent=iterator, creates_dir=False, skip_existing=0)
     p.add_task(allocation_stand_in, parent=check)
     p.execute()
     return p
@@ -134,12 +136,22 @@ def table(project_dir, year=2018):
 
 # --- Registration ---------------------------------------------------------------------------------------------------
 
+def test_every_year_allocates_in_its_own_directory(tmp_path):
+    """A task under the check must get each year's directory, as allocation_zones did under the allocations iterator."""
+    paths = build(str(tmp_path / 'in'), {2018: {1: {'cropland': 1.0, 'forest': -1.0}}, 2019: {1: {'cropland': 1.0, 'forest': -1.0}}},
+                  years=(2018, 2019))
+    DIRS.clear()
+    run(str(tmp_path / 'project'), paths)
+    assert REACHED == [2018, 2019]
+    for year in (2018, 2019):
+        assert DIRS[year].replace(os.sep, '/').endswith('/bau/%d/allocation_stand_in' % year)
+
 def test_standard_tree_checks_each_year_before_its_zones_are_allocated(tmp_path):
     p = hb.ProjectFlow(project_dir=str(tmp_path))
     p.run_in_parallel = 0
     seals_initialize_project.build_standard_task_tree(p)
     check = p.regional_demand_feasibility_task
-    assert check.parent is p.allocations_task and check.creates_dir is False
+    assert check.parent is p.allocations_task and check.creates_dir is False and check.type == 'iterator'
     assert p.allocation_zones_task.parent is check and p.allocation_task.parent is p.allocation_zones_task
     assert [c.name for c in p.allocations_task.children] == ['regional_demand_feasibility']
 
