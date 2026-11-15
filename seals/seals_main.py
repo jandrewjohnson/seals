@@ -1658,13 +1658,7 @@ def regional_demand_feasibility(p):
     if missing:
         raise NameError('regional_demand_feasibility cannot check ' + str(p.year) + ' without: ' + ', '.join(missing))
 
-    coefficients_df = seals_utils.prepare_allocation_coefficients(p, pd.read_csv(calibration_path), calibration_path)
-    layer_names, layer_paths, layer_coefficients = seals_utils.feasibility_constraint_layers(coefficients_df, p.changing_class_labels)
-    possible_dirs = [p.intermediate_dir, p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir]
-    layer_paths = [p.get_path(path, possible_dirs=possible_dirs) for path in layer_paths]
-    missing = [path for path in layer_paths if not hb.path_exists(path)]
-    if missing:
-        raise NameError('regional_demand_feasibility cannot check ' + str(p.year) + ' without the constraint layers: ' + ', '.join(missing))
+    layer_names, layer_paths, layer_coefficients = seals_utils.placement_constraint_layers(p, calibration_path, 'regional_demand_feasibility')
 
     tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, earlier_years, None if first_year else p.previous_year)
 
@@ -1740,16 +1734,22 @@ def adjacent_coarse_budgets(p):
     the routed budgets (p.projected_coarse_change_dir points here); when it is skipped, allocation reads the coarse
     budgets as given. Regional totals are unchanged and no donor rule is added.
 
-    For the year's accepted starting map (base-year map plus earlier years' tiles, earlier changes locked by the previous
-    year's cumulative_change_happened) it sums, per coarse cell, the hectares of each class that may still change. It
-    then calls seals_utils.route_signed_budgets_to_adjacent_cells: a class cannot lose more in a cell than that open
-    stock, a cell cannot gain more than it loses, and the excess moves ring by ring to cells of the same region, losses
-    weighted by where the class is and gains by p.adjacent_gain_weight_paths (label -> coarse raster, for example a
-    LuccME preference; uniform when not given).
+    On the year's accepted starting map (base-year map plus earlier years' tiles, earlier changes locked by the previous
+    year's cumulative_change_happened) and under the allocator's own placement constraints (the multiplicative layers of
+    the coefficient table as allocation_zones prepares them, so protected and non-changing classes and scenario masks
+    included) it sums, per coarse cell, each class's losable stock (pixels some class the region asks to gain may take)
+    and the land each gaining class may take. It then calls seals_utils.route_signed_budgets_to_adjacent_cells: a class
+    cannot lose more in a cell than its losable stock, a cell cannot gain more than it loses, and the excess moves ring
+    by ring to cells of the same region, losses weighted by where the losable stock is and gains by
+    p.adjacent_gain_weight_paths (label -> coarse raster, for example a LuccME preference; uniform when not given).
+    Each cell's routed gains are then checked against the land each class may take there and, together, against the land
+    any of them may take, each pixel counted once. These are necessary conditions only: no joint assignment of pixels to
+    competing gainers is solved, and the allocator still takes losses by rank.
 
     Writes one routed raster per class, named as allocation expects, and adjacent_coarse_budgets.csv per region and
-    class: coarse input, routed budget, and gain and loss left unplaced. Raises, after writing the table, if anything is
-    left unplaced: demand is never shrunk. The outputs are reused only while every input and setting is unchanged.
+    class: coarse input, routed budget, gain and loss left unplaced, and gain above the land the class may take in its
+    cells. Raises, after writing the table, if anything is left unplaced or above that land: demand is never shrunk.
+    The outputs are reused only while every input and setting is unchanged.
     """
     p.unrouted_coarse_change_dir = getattr(p, 'unrouted_coarse_change_dir', None) or p.projected_coarse_change_dir
     p.adjacent_coarse_budgets_path = os.path.join(p.cur_dir, 'adjacent_coarse_budgets.csv')
@@ -1774,6 +1774,8 @@ def adjacent_coarse_budgets(p):
     missing = [path for path in required if not hb.path_exists(path)]
     if missing:
         raise NameError('adjacent_coarse_budgets cannot route ' + str(p.year) + ' without: ' + ', '.join(missing))
+    calibration_path = seals_utils.resolve_calibration_parameters_path(p)
+    layer_names, layer_paths, layer_coefficients = seals_utils.placement_constraint_layers(p, calibration_path, 'adjacent_coarse_budgets')
     tiles = seals_utils.earlier_allocation_tiles(scenario_dir, tile_name, [y for y in years if y < int(p.year)],
                                                  None if first_year else p.previous_year)
     labels = list(p.changing_class_labels)
@@ -1781,7 +1783,10 @@ def adjacent_coarse_budgets(p):
     sources.update({'change_' + label: path for label, path in zip(labels, change_paths)})
     sources.update({'gain_weight_' + label: path for label, path in weight_paths.items()})
     sources.update({kind + '_' + str(k): path for k, (kind, path) in enumerate(tiles)})
+    sources['coefficients'] = calibration_path
+    sources.update({'layer_' + name: path for name, path in zip(layer_names, layer_paths)})
     settings = {'year': int(p.year), 'class_ids': [int(i) for i in p.changing_class_indices], 'class_labels': labels,
+                'layer_names': layer_names, 'layer_coefficients': layer_coefficients.tolist(),
                 'neighborhood': getattr(p, 'adjacency_neighborhood', 'queen'),
                 'zero_weight_cells': getattr(p, 'adjacency_zero_weight_cells', 'after_positive'), 'tolerance_ha': 1e-6}
     hb.create_directories(p.cur_dir)
@@ -1802,7 +1807,10 @@ def adjacent_coarse_budgets(p):
         n_cols, n_rows = grid['raster_size']
         windows = seals_utils.allocation_tile_windows(tiles, grid['geotransform'])
         class_ids = settings['class_ids']
-        open_stock = np.zeros((len(class_ids), regions.size + 1))
+        in_region = regions > 0
+        regional = np.array([np.bincount(regions[in_region], weights=signed[k][in_region], minlength=regions.max() + 1) for k in range(len(labels))])
+        gaining_by_cell = np.concatenate([np.zeros((len(labels), 1), bool), regional[:, regions.ravel()] > 0], axis=1)
+        capacity = None
         stripe = ratio * max(1, int(5e6 // max(1, n_cols * ratio)))
         for row in range(0, n_rows, stripe):
             height = min(stripe, n_rows - row)
@@ -1812,15 +1820,21 @@ def adjacent_coarse_budgets(p):
             seals_utils.paste_allocation_tiles(lulc, locked, row, windows)
             ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
             cell = np.repeat(np.repeat(cells[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
-            nothing = np.zeros((len(class_ids), regions.size + 1), dtype=bool)
-            part = seals_utils.regional_stock_capacity(lulc, valid, locked, ha, cell, class_ids, np.ones((len(class_ids),) + lulc.shape, bool),
-                                                       nothing, regions.size)
-            open_stock += part['eligible']
-        open_stock = open_stock[:, 1:].reshape(len(class_ids), n_rows_coarse, n_cols_coarse)
+            layers = np.array([seals_utils.read_aligned_window(path, grid['geotransform'], 0, row, n_cols, height) for path in layer_paths], dtype=np.float64)
+            allowed = seals_utils.placement_allowed(layers, layer_coefficients) if len(layer_paths) else np.ones((len(class_ids),) + lulc.shape, bool)
+            part = seals_utils.regional_stock_capacity(lulc, valid, locked, ha, cell, class_ids, allowed, gaining_by_cell, regions.size)
+            capacity = part if capacity is None else {key: capacity[key] + part[key] for key in part}
+        shape = (len(class_ids), n_rows_coarse, n_cols_coarse)
+        losable = capacity['losable'][:, 1:].reshape(shape)
+        receivable = capacity['receivable'][:, 1:].reshape(shape)
+        any_receivable = capacity['any_receivable'][1:].reshape(regions.shape)
         gain_weights = np.array([hb.as_array(weight_paths[label]).astype(np.float64) if label in weight_paths else np.ones(regions.shape)
                                  for label in labels])
-        routed = seals_utils.route_signed_budgets_to_adjacent_cells(signed, open_stock, regions, gain_weights, open_stock,
+        routed = seals_utils.route_signed_budgets_to_adjacent_cells(signed, losable, regions, gain_weights, losable,
                                                                     settings['neighborhood'], settings['zero_weight_cells'])
+        gains = np.maximum(routed['budgets'], 0.0)
+        beyond_class = np.maximum(gains - receivable, 0.0)
+        beyond_shared = np.maximum(gains.sum(axis=0) - any_receivable, 0.0)
         for k, path in enumerate(routed_paths):
             hb.save_array_as_geotiff(routed['budgets'][k], path, region_ids_path, data_type=7, ndv=-9999.0)
         rows = []
@@ -1831,11 +1845,20 @@ def adjacent_coarse_budgets(p):
                              'budget_ha': float(routed['budgets'][k][inside].sum()),
                              'unplaced_gain_ha': float(routed['unplaced_gain'][k][inside].sum()),
                              'unplaced_loss_ha': float(routed['unplaced_loss'][k][inside].sum()),
+                             'gain_beyond_receivable_ha': float(beyond_class[k][inside].sum()),
+                             'region_gains_beyond_shared_land_ha': float(beyond_shared[inside].sum()),
                              'cells_changed': int((np.abs(routed['budgets'][k] - signed[k]) > settings['tolerance_ha'])[inside].sum())})
         pd.DataFrame(rows).to_csv(p.adjacent_coarse_budgets_path, encoding='utf-8-sig', index=False)
         seals_utils.save_provenance(provenance_path, sources, settings)
     table = pd.read_csv(p.adjacent_coarse_budgets_path, encoding='utf-8-sig')
-    left = table[(table['unplaced_gain_ha'] > settings['tolerance_ha']) | (table['unplaced_loss_ha'] > settings['tolerance_ha'])]
+    tolerance = settings['tolerance_ha']
+    beyond = table[(table['gain_beyond_receivable_ha'] > tolerance) | (table['region_gains_beyond_shared_land_ha'] > tolerance)]
+    if len(beyond):
+        raise NameError('adjacent_coarse_budgets ' + str(p.year) + ': routed gains exceed the land the gaining classes may take in their cells, so '
+                        'nothing was allocated. ' + '; '.join('region %d %s %.6g ha above its land, region gains %.6g ha above the shared land'
+                                                              % (r.region_id, r.class_label, r.gain_beyond_receivable_ha, r.region_gains_beyond_shared_land_ha)
+                                                              for r in beyond.itertuples()) + '. Table: ' + p.adjacent_coarse_budgets_path)
+    left = table[(table['unplaced_gain_ha'] > tolerance) | (table['unplaced_loss_ha'] > tolerance)]
     if len(left):
         raise NameError('adjacent_coarse_budgets ' + str(p.year) + ': no cell of the region can take part of the budget, so nothing was allocated. '
                         + '; '.join('region %d %s gain %.6g ha, loss %.6g ha unplaced' % (r.region_id, r.class_label, r.unplaced_gain_ha, r.unplaced_loss_ha)
@@ -1854,7 +1877,7 @@ def regional_transitions(p):
 
     Writes regional_transitions.csv (region, source class, destination class, hectares, diagonal included) and
     regional_transitions_summary.csv (per region and class: before and after stock, unchanged, gross gain and loss,
-    realized net, the intended net fed to the allocator, and the difference). Row sums must equal the starting stock
+    realized net, the intended net (the coarse budget as given, before any adjacent routing), and the difference). Row sums must equal the starting stock
     and column sums the produced stock, or it raises. Donor violations are reported only when explicit rules are given
     in p.regional_transitions_allowed_path; none are assumed. It reads maps and reports; it changes nothing.
     """
@@ -1868,7 +1891,12 @@ def regional_transitions(p):
 
     lulc_path = p.lulc_simplified_paths[p.key_base_year]
     region_ids_path = os.path.join(p.regional_change_dir, 'region_ids.tif')
+    # Intended change is the coarse budget as given, before any routing: adjacent_coarse_budgets keeps the original
+    # directory in p.unrouted_coarse_change_dir when it points allocation at its routed rasters.
+    routed_dir = p.projected_coarse_change_dir
+    p.projected_coarse_change_dir = getattr(p, 'unrouted_coarse_change_dir', None) or routed_dir
     change_paths = seals_utils.projected_coarse_change_paths(p)
+    p.projected_coarse_change_dir = routed_dir
     rules_path = getattr(p, 'regional_transitions_allowed_path', None) or None
     years = [int(y) for y in (p.seals_years if hasattr(p, 'seals_years') else p.years)]
     scenario_dir = os.path.dirname(p.cur_dir_parent_dir)

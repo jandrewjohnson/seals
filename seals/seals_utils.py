@@ -2969,3 +2969,26 @@ def route_signed_budgets_to_adjacent_cells(signed_targets, class_ha, region_ids,
     routed = route_residual_to_adjacent_cells(gains, gain_capacity, region_ids, gain_weights, neighborhood, zero_weight_cells)
     budgets = routed['targets'] - placed_losses
     return {'budgets': budgets, 'unplaced_loss': unplaced_loss, 'unplaced_gain': routed['unplaced'], 'cell_balance': budgets.sum(axis=0)}
+
+def placement_constraint_layers(p, calibration_path, task_name):
+    """The multiplicative layers allocation applies, prepared exactly as allocation_zones prepares the coefficient table.
+
+    Args:
+        p (ProjectFlow): the run.
+        calibration_path (str): from resolve_calibration_parameters_path.
+        task_name (str): named in the error.
+
+    Returns:
+        tuple: layer names, resolved layer paths and coefficients (class by layer), as feasibility_constraint_layers.
+
+    Raises:
+        NameError: if a layer file is missing, and as feasibility_constraint_layers.
+    """
+    coefficients_df = prepare_allocation_coefficients(p, pd.read_csv(calibration_path), calibration_path)
+    layer_names, layer_paths, layer_coefficients = feasibility_constraint_layers(coefficients_df, p.changing_class_labels)
+    possible_dirs = [p.intermediate_dir, p.fine_processed_inputs_dir, p.input_dir, p.base_data_dir]
+    layer_paths = [p.get_path(path, possible_dirs=possible_dirs) for path in layer_paths]
+    missing = [path for path in layer_paths if not hb.path_exists(path)]
+    if missing:
+        raise NameError(task_name + ' cannot run ' + str(p.year) + ' without the constraint layers: ' + ', '.join(missing))
+    return layer_names, layer_paths, layer_coefficients
