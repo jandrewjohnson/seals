@@ -2290,6 +2290,41 @@ def coarse_base_state_labels(row, baseline_reference_row):
     source_row = row if baseline_reference_row['scenario_type'] == 'baseline' else baseline_reference_row
     return [str(source_row[column]) for column in ('exogenous_label', 'climate_label', 'model_label', 'counterfactual_label')]
 
+
+def coarse_ha_per_class_from_fine_lulc(lulc_path, class_indices, ha_per_cell_coarse_array, coarse_rows_per_chunk=8):
+    """Hectares of each class in every coarse cell, aggregated from a fine LULC raster.
+
+    The fine raster must cover exactly the extent of ha_per_cell_coarse_array, with a whole
+    number of fine cells per coarse cell. The area of a class in a coarse cell is the fraction
+    of its fine cells in that class times the coarse cell's hectares. The raster is read a few
+    coarse rows at a time, so a global 10-arcsecond map never has to fit in memory.
+
+    Args:
+        lulc_path (str): Fine LULC raster, already in the simplified class scheme.
+        class_indices (list): Class ids to tabulate.
+        ha_per_cell_coarse_array (np.ndarray): Hectares per coarse cell, shape (coarse_rows, coarse_cols).
+        coarse_rows_per_chunk (int): Coarse rows read per pass.
+
+    Returns:
+        dict: class id -> float64 array of hectares, shaped like ha_per_cell_coarse_array.
+    """
+    coarse_n_rows, coarse_n_cols = ha_per_cell_coarse_array.shape
+    fine_n_cols, fine_n_rows = hb.get_raster_info(lulc_path)['raster_size']
+    upscale = fine_n_cols // coarse_n_cols
+    if fine_n_cols != coarse_n_cols * upscale or fine_n_rows != coarse_n_rows * upscale:
+        raise ValueError('Fine raster ' + str(lulc_path) + ' of shape ' + str((fine_n_rows, fine_n_cols)) + ' is not a whole multiple of the coarse grid ' + str((coarse_n_rows, coarse_n_cols)) + '.')
+
+    ha_per_class = {i: np.zeros((coarse_n_rows, coarse_n_cols), dtype=np.float64) for i in class_indices}
+    for coarse_row in range(0, coarse_n_rows, coarse_rows_per_chunk):
+        n_rows = min(coarse_rows_per_chunk, coarse_n_rows - coarse_row)
+        fine_chunk = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, coarse_row * upscale, fine_n_cols, n_rows * upscale])
+        fine_chunk = fine_chunk.reshape(n_rows, upscale, coarse_n_cols, upscale)
+        ha_chunk = ha_per_cell_coarse_array[coarse_row: coarse_row + n_rows]
+        for i in class_indices:
+            ha_per_class[i][coarse_row: coarse_row + n_rows] = (fine_chunk == i).sum(axis=(1, 3)) / float(upscale * upscale) * ha_chunk
+    return ha_per_class
+
+
 def check_fine_coarse_alignment(fine_path, coarse_path):
     """Return how many fine pixels span one coarse cell, after checking that the two grids nest exactly.
 
