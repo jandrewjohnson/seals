@@ -1788,12 +1788,8 @@ def adjacent_coarse_budgets(p):
                 'zero_weight_cells': getattr(p, 'adjacency_zero_weight_cells', 'after_positive'), 'tolerance_ha': 1e-6}
     hb.create_directories(p.cur_dir)
     provenance_path = os.path.join(p.cur_dir, 'adjacent_coarse_budgets_provenance.json')
-    try:
-        reuse = seals_utils.reuse_outputs_if_inputs_unchanged('adjacent_coarse_budgets', provenance_path, routed_paths + [p.adjacent_coarse_budgets_path],
-                                                             sources, settings)
-    except NameError as error:
-        hb.log('adjacent_coarse_budgets: recomputing because ' + str(error))
-        reuse = False
+    reuse = seals_utils.reuse_outputs_if_inputs_unchanged('adjacent_coarse_budgets', provenance_path, routed_paths + [p.adjacent_coarse_budgets_path],
+                                                         sources, settings)
     if not reuse:
         ratio = seals_utils.check_fine_coarse_alignment(lulc_path, region_ids_path)
         regions = hb.as_array(region_ids_path).astype(np.int64)
