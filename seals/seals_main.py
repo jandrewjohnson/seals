@@ -1677,12 +1677,8 @@ def regional_demand_feasibility(p):
                 'tolerance_ha': 1e-6}
     hb.create_directories(p.cur_dir)   # registered with creates_dir=False, so it writes into the iteration's own directory
     provenance_path = os.path.join(p.cur_dir, 'regional_demand_feasibility_provenance.json')
-    try:
-        reuse = seals_utils.reuse_outputs_if_inputs_unchanged('regional_demand_feasibility', provenance_path, [p.regional_demand_feasibility_path],
-                                                             sources, settings)
-    except NameError as error:
-        hb.log('regional_demand_feasibility: recomputing because ' + str(error))
-        reuse = False
+    reuse = seals_utils.reuse_outputs_if_inputs_unchanged('regional_demand_feasibility', provenance_path, [p.regional_demand_feasibility_path],
+                                                         sources, settings)
 
     if reuse:
         table = pd.read_csv(p.regional_demand_feasibility_path, encoding='utf-8-sig')
@@ -1784,11 +1780,8 @@ def regional_transitions(p):
     outputs = [p.regional_transitions_path, p.regional_transitions_summary_path]
     hb.create_directories(p.cur_dir)
     provenance_path = os.path.join(p.cur_dir, 'regional_transitions_provenance.json')
-    try:
-        if seals_utils.reuse_outputs_if_inputs_unchanged('regional_transitions', provenance_path, outputs, sources, settings):
-            return p
-    except NameError as error:
-        hb.log('regional_transitions: recomputing because ' + str(error))
+    if seals_utils.reuse_outputs_if_inputs_unchanged('regional_transitions', provenance_path, outputs, sources, settings):
+        return p
 
     allowed = seals_utils.read_allowed_transitions(rules_path, class_labels) if rules_path else None
     ratio = seals_utils.check_fine_coarse_alignment(lulc_path, region_ids_path)
