@@ -134,6 +134,20 @@ def test_nodata_is_kept_out_of_the_matrix_and_reported_when_it_changes(tmp_path)
     assert summary.loc[(2, 'grassland'), 'before_ha'] == 11.0 and summary.loc[(2, 'grassland'), 'after_ha'] == 11.0
     assert summary.loc[(2, 'othernat'), 'before_ha'] == 19.0
 
+def test_a_class_id_with_no_label_is_logged_and_does_not_stop_the_run(tmp_path):
+    lulc = base_map()
+    after = lulc.copy()
+    after[0, 0] = 99
+    paths = build(str(tmp_path / 'in'), {2018: {}})
+    run(str(tmp_path / 'project'), paths, {2018: (after, (after != lulc).astype(int))})   # does not raise
+    assert not os.path.exists(os.path.join(year_dir(str(tmp_path / 'project'), 2018), 'regional_transitions.csv'))
+
+def test_float_error_that_grows_with_the_stock_is_not_a_lost_hectare():
+    matrix = np.zeros((2, 1, 1))
+    matrix[1, 0, 0] = 1e9
+    stock = np.array([[0.0], [1e9 + 1e-3]])
+    seals_utils.summarize_regional_transitions(matrix, stock, stock, {}, ['a'])
+
 def test_explicit_donor_rules_flag_disallowed_hectares_and_none_are_assumed(tmp_path):
     lulc, after = crop_expansion()
     rules = [{'from_class_label': a, 'to_class_label': b, 'allowed': int(not (a == 'othernat' and b == 'cropland'))}
