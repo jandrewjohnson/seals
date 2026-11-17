@@ -2770,7 +2770,8 @@ def read_allowed_transitions(path, class_labels):
         raise NameError('Donor rules do not cover every pair of classes; missing %s' % missing[:10])
     return allowed
 
-def summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed=None, tolerance_ha=1e-6):
+def summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed=None, tolerance_ha=1e-6,
+                                   relative_tolerance=1e-9):
     """Physical accounting of one year's transitions per region and class, checked against the maps' own stocks.
 
     Args:
@@ -2782,6 +2783,7 @@ def summarize_regional_transitions(matrix, stock_before, stock_after, intended, 
         class_labels (list): labels in the matrix order.
         allowed (numpy.ndarray): bool donor rules, source by destination, or None when none were supplied.
         tolerance_ha (float): floating-point slack only.
+        relative_tolerance (float): floating-point slack as a share of the stock, for sums over large regions.
 
     Returns:
         tuple: (transitions, summary) DataFrames. transitions has one row per region, source and destination with
@@ -2792,7 +2794,8 @@ def summarize_regional_transitions(matrix, stock_before, stock_after, intended, 
             mean the matrix lost or invented land.
     """
     rows_sum, columns_sum = matrix.sum(axis=2), matrix.sum(axis=1)
-    if np.abs(rows_sum - stock_before).max(initial=0) > tolerance_ha or np.abs(columns_sum - stock_after).max(initial=0) > tolerance_ha:
+    if not (np.allclose(rows_sum, stock_before, rtol=relative_tolerance, atol=tolerance_ha)
+            and np.allclose(columns_sum, stock_after, rtol=relative_tolerance, atol=tolerance_ha)):
         raise NameError('Transition matrix does not reproduce the map stocks: max row error %.6g ha, max column error %.6g ha'
                         % (np.abs(rows_sum - stock_before).max(initial=0), np.abs(columns_sum - stock_after).max(initial=0)))
     diagonal = np.einsum('rkk->rk', matrix)
