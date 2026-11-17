@@ -13,6 +13,9 @@ from seals import seals_utils
 
 L = hb_config.get_logger()
 
+# The static regressors the global calibration was fitted with, all in base_data/seals/static_regressors. Used when a project does not set p.static_regressor_paths.
+default_static_regressor_labels = ['alt_m', 'carbon_aboveground_Mg_per_ha', 'clay_percent', 'ph', 'pop', 'precip_mm', 'sand_percent', 'silt_percent', 'soil_bulk_density', 'soil_cec', 'soil_organic_content', 'strict_pa', 'temperature_c', 'travel_time_to_market_mins', 'wetlands_binary']
+
 def aligned_habitat_raster(p):
 
     if p.run_this:
@@ -536,6 +539,9 @@ def local_data_regressors_starting_values(p):
                 #     df_input_2d_list.append(row)
 
             # for all static variables, set to zero, except for as a hack one of them so that the it is edefined everyone.
+            if not hasattr(p, 'static_regressor_paths'):
+                p.static_regressor_paths = {label: p.get_path(os.path.join('seals', 'static_regressors', label + '.tif')) for label in default_static_regressor_labels}
+
             for static_regressor_label, path in p.static_regressor_paths.items():
                 # base_data_path = os.path.join(p.base_data_dir, 'lulc', 'esa', 'seals7', 'binaries' + lulc_alternate_reclassification_string, str(p.key_base_year), 'lulc_esa_seals7_' + str(p.base_year) + '_class_' + str(p.changing_class_indices[c]) + '_binary.tif')
                 # local_data_path = os.path.join(p.fine_processed_inputs_dir, p.aoi_label, 'lulc', 'esa', 'seals7', 'binaries' + lulc_alternate_reclassification_string, str(p.base_year), 'lulc_esa_seals7_' + str(p.base_year) + '_class_' + str(p.all_class_indicesall_class_indices[c]) + '_binary.tif')
