@@ -1,4 +1,4 @@
-import logging, os, math, sys, json
+import logging, os, math, sys, json, glob
 from osgeo import gdal
 import numpy as np
 import scipy
@@ -2656,3 +2656,162 @@ def read_aligned_window(path, grid_geotransform, col, row, n_cols, n_rows):
     if c < 0 or r < 0 or c + n_cols > width or r + n_rows > height:
         raise NameError(path + ' does not cover the allocation grid.')
     return hb.load_geotiff_chunk_by_cr_size(path, [c, r, n_cols, n_rows])
+
+def earlier_allocation_tiles(scenario_dir, tile_name, map_years, mask_year):
+    """The allocation tiles that make up an accepted map, as allocation finds them.
+
+    Args:
+        scenario_dir (str): allocations/<exogenous>/<climate>/<model>/<counterfactual>.
+        tile_name (str): the tile's lulc file name with '{}' for the year.
+        map_years (list): years whose lulc tiles to lay over the base map, oldest first, so a tile that did not change
+            in a later year keeps its last map.
+        mask_year (int): year whose cumulative_change_happened tiles mark locked pixels, or None for none.
+
+    Returns:
+        list: (kind, path) pairs, kind 'lulc' or 'locked', in the order they are to be applied.
+    """
+    def found(year, file_name):
+        return sorted(glob.glob(os.path.join(scenario_dir, str(year), 'allocation_zones', '*', 'allocation', file_name)))
+    tiles = [('lulc', path) for year in map_years for path in found(year, tile_name.format(year))]
+    if mask_year is not None:
+        tiles += [('locked', path) for path in found(mask_year, 'cumulative_change_happened.tif')]
+    return tiles
+
+def allocation_tile_windows(tiles, grid_geotransform):
+    """Where each tile sits on the allocation grid: (kind, path, row, col, n_rows, n_cols)."""
+    windows = []
+    for kind, path in tiles:
+        g = hb.get_raster_info_hb(path)
+        col = int(round((g['geotransform'][0] - grid_geotransform[0]) / grid_geotransform[1]))
+        row = int(round((g['geotransform'][3] - grid_geotransform[3]) / grid_geotransform[5]))
+        windows.append((kind, path, row, col) + tuple(g['raster_size'][::-1]))
+    return windows
+
+def paste_allocation_tiles(lulc, locked, row, windows):
+    """Write the tiles that overlap a stripe of rows into it, in order: lulc tiles into lulc, locked tiles into locked.
+
+    Each grid pixel is written, not added, so overlapping tiles cannot count a pixel twice.
+
+    Args:
+        lulc (numpy.ndarray): the stripe of the map, changed in place.
+        locked (numpy.ndarray): bool, the stripe of locked pixels, changed in place; may be None if no tile is 'locked'.
+        row (int): grid row of the stripe's first row.
+        windows (list): from allocation_tile_windows.
+    """
+    height, n_cols = lulc.shape
+    for kind, path, tile_row, tile_col, tile_rows, tile_cols in windows:
+        r0, r1 = max(row, tile_row), min(row + height, tile_row + tile_rows)
+        if r0 >= r1:
+            continue
+        c0, c1 = max(0, tile_col), min(n_cols, tile_col + tile_cols)
+        block = hb.as_array(path)[r0 - tile_row:r1 - tile_row, c0 - tile_col:c1 - tile_col]
+        if kind == 'lulc':
+            lulc[r0 - row:r1 - row, c0:c1] = block
+        else:
+            locked[r0 - row:r1 - row, c0:c1] = block == 1
+
+def regional_transition_hectares(before, after, ha, region, valid, class_ids, n_regions):
+    """Hectares that move from each class to each class, per region, summed from fine pixel areas.
+
+    The diagonal is the stock that did not change. Pixels outside every region (id 0) and pixels that are not valid
+    are left out.
+
+    Args:
+        before (numpy.ndarray): the accepted map the year starts from.
+        after (numpy.ndarray): the map the year produced, same shape.
+        ha (numpy.ndarray): hectares of each pixel.
+        region (numpy.ndarray): region id of each pixel, 0 outside every region.
+        valid (numpy.ndarray): bool, pixels to count (data in both maps).
+        class_ids (list): every class id the maps may hold, in report order.
+        n_regions (int): the largest region id.
+
+    Returns:
+        numpy.ndarray: region id by source class by destination class, in hectares.
+
+    Raises:
+        NameError: if a counted pixel holds a class id not in class_ids.
+    """
+    counted = valid & (region > 0)
+    for name, array in (('before', before), ('after', after)):
+        unknown = sorted(set(np.unique(array[counted]).tolist()) - set(int(i) for i in class_ids))
+        if unknown:
+            raise NameError('The %s map holds class ids with no label: %s' % (name, unknown))
+    n = len(class_ids)
+    lookup = np.zeros(int(max(max(class_ids), before[counted].max(initial=0), after[counted].max(initial=0))) + 1, dtype=np.int64)
+    lookup[np.asarray(class_ids, dtype=np.int64)] = np.arange(n)
+    index = (region[counted].astype(np.int64) * n + lookup[before[counted]]) * n + lookup[after[counted]]
+    return np.bincount(index, weights=ha[counted], minlength=(n_regions + 1) * n * n).reshape(n_regions + 1, n, n)
+
+def read_allowed_transitions(path, class_labels):
+    """Read explicit donor rules: a CSV of from_class_label, to_class_label, allowed (1 or 0).
+
+    Every pair of different classes must be listed, so no rule is assumed.
+
+    Returns:
+        numpy.ndarray: bool, source class by destination class; the diagonal is True.
+
+    Raises:
+        NameError: if a pair is missing or listed twice, or a label is unknown.
+    """
+    df = pd.read_csv(path, encoding='utf-8-sig')
+    unknown = sorted((set(df['from_class_label']) | set(df['to_class_label'])) - set(class_labels))
+    if unknown:
+        raise NameError('Donor rules name unknown classes: %s' % unknown)
+    if df.duplicated(['from_class_label', 'to_class_label']).any():
+        raise NameError('Donor rules list a pair twice: ' + path)
+    position = {label: k for k, label in enumerate(class_labels)}
+    allowed = np.eye(len(class_labels), dtype=bool)
+    listed = np.eye(len(class_labels), dtype=bool)
+    for r in df.itertuples():
+        allowed[position[r.from_class_label], position[r.to_class_label]] = bool(int(r.allowed))
+        listed[position[r.from_class_label], position[r.to_class_label]] = True
+    missing = [(class_labels[i], class_labels[j]) for i, j in zip(*np.nonzero(~listed))]
+    if missing:
+        raise NameError('Donor rules do not cover every pair of classes; missing %s' % missing[:10])
+    return allowed
+
+def summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed=None, tolerance_ha=1e-6,
+                                   relative_tolerance=1e-9):
+    """Physical accounting of one year's transitions per region and class, checked against the maps' own stocks.
+
+    Args:
+        matrix (numpy.ndarray): from regional_transition_hectares.
+        stock_before (numpy.ndarray): region id by class, hectares on the starting map, counted independently.
+        stock_after (numpy.ndarray): region id by class, hectares on the produced map.
+        intended (dict): class label -> array by region id of the intended net change (the GTAP totals as fed to the
+            allocator); classes without a target are left out.
+        class_labels (list): labels in the matrix order.
+        allowed (numpy.ndarray): bool donor rules, source by destination, or None when none were supplied.
+        tolerance_ha (float): floating-point slack only.
+        relative_tolerance (float): floating-point slack as a share of the stock, for sums over large regions.
+
+    Returns:
+        tuple: (transitions, summary) DataFrames. transitions has one row per region, source and destination with
+            hectares > 0, diagonal included. summary has one row per region and class.
+
+    Raises:
+        NameError: if a row sum differs from the starting stock or a column sum from the produced stock, which would
+            mean the matrix lost or invented land.
+    """
+    rows_sum, columns_sum = matrix.sum(axis=2), matrix.sum(axis=1)
+    if not (np.allclose(rows_sum, stock_before, rtol=relative_tolerance, atol=tolerance_ha)
+            and np.allclose(columns_sum, stock_after, rtol=relative_tolerance, atol=tolerance_ha)):
+        raise NameError('Transition matrix does not reproduce the map stocks: max row error %.6g ha, max column error %.6g ha'
+                        % (np.abs(rows_sum - stock_before).max(initial=0), np.abs(columns_sum - stock_after).max(initial=0)))
+    diagonal = np.einsum('rkk->rk', matrix)
+    regions = [int(r) for r in np.nonzero(stock_before.sum(axis=1) + stock_after.sum(axis=1))[0] if r > 0]
+    transitions, summary = [], []
+    for r in regions:
+        for i, j in zip(*np.nonzero(matrix[r] > 0)):
+            transitions.append({'region_id': r, 'from_class_label': class_labels[i], 'to_class_label': class_labels[j],
+                                'ha': float(matrix[r, i, j]), 'unchanged': bool(i == j),
+                                'allowed': (bool(allowed[i, j]) if allowed is not None else np.nan)})
+        for k, label in enumerate(class_labels):
+            gain, loss = float(columns_sum[r, k] - diagonal[r, k]), float(rows_sum[r, k] - diagonal[r, k])
+            target = float(intended[label][r]) if label in intended else np.nan
+            violation = float(matrix[r, :, k][~allowed[:, k]].sum()) if allowed is not None else np.nan
+            summary.append({'region_id': r, 'class_label': label, 'before_ha': float(stock_before[r, k]), 'after_ha': float(stock_after[r, k]),
+                            'unchanged_ha': float(diagonal[r, k]), 'gross_gain_ha': gain, 'gross_loss_ha': loss, 'realized_net_ha': gain - loss,
+                            'intended_net_ha': target, 'realized_minus_intended_ha': gain - loss - target,
+                            'disallowed_gain_ha': violation})
+    return pd.DataFrame(transitions), pd.DataFrame(summary)
