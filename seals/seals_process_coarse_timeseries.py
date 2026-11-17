@@ -1531,3 +1531,22 @@ def coarse_simplified_ha_difference_from_previous_year(p):
                             hb.save_array_as_geotiff(current_array, current_ending_year_dst_path, p.aoi_ha_per_cell_coarse_path)
 
                         previous_year = year
+
+
+def coarse_observed_ha_difference(p):
+    """Observed coarse change over the calibration window, aggregated from the fine LULC maps.
+
+    Writes one <class_label>_<training_start_year>_<training_end_year>_ha_difference.tif per class
+    at the coarse resolution. Calibration reads these to leave out zones where nothing changed.
+    """
+    p.projected_coarse_change_dir = p.cur_dir # The calibration iterator looks here, whether or not this task runs again.
+
+    if p.run_this:
+        ha_per_cell_coarse_array = hb.as_array(p.aoi_ha_per_cell_coarse_path).astype(np.float64)
+        output_paths = {label: os.path.join(p.cur_dir, label + '_' + str(p.training_start_year) + '_' + str(p.training_end_year) + '_ha_difference.tif') for label in p.all_class_labels}
+
+        if not all(hb.path_exists(path) for path in output_paths.values()):
+            start_ha = seals_utils.coarse_ha_per_class_from_fine_lulc(p.lulc_simplified_paths[p.training_start_year], p.all_class_indices, ha_per_cell_coarse_array)
+            end_ha = seals_utils.coarse_ha_per_class_from_fine_lulc(p.lulc_simplified_paths[p.training_end_year], p.all_class_indices, ha_per_cell_coarse_array)
+            for label, class_index in zip(p.all_class_labels, p.all_class_indices):
+                hb.save_array_as_geotiff((end_ha[class_index] - start_ha[class_index]).astype(np.float32), output_paths[label], p.aoi_ha_per_cell_coarse_path, data_type=6, ndv=-9999.0)

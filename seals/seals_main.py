@@ -1741,7 +1741,8 @@ def regional_transitions(p):
     Writes regional_transitions.csv (region, source class, destination class, hectares, diagonal included) and
     regional_transitions_summary.csv (per region and class: before and after stock, unchanged, gross gain and loss,
     realized net, the intended net fed to the allocator, and the difference). Row sums must equal the starting stock
-    and column sums the produced stock, or it raises. Donor violations are reported only when explicit rules are given
+    and column sums the produced stock; if they do not, or a map holds a class id with no label, it logs a warning and
+    writes no tables for that year, and the run goes on. Donor violations are reported only when explicit rules are given
     in p.regional_transitions_allowed_path; none are assumed. It reads maps and reports; it changes nothing.
     """
     p.regional_transitions_path = os.path.join(p.cur_dir, 'regional_transitions.csv')
@@ -1776,7 +1777,8 @@ def regional_transitions(p):
     if rules_path:
         sources['allowed_transitions'] = rules_path
     settings = {'year': int(p.year), 'previous_year': int(p.previous_year), 'class_ids': class_ids, 'class_labels': class_labels,
-                'changing_class_labels': list(p.changing_class_labels), 'n_before_tiles': len(before_tiles), 'tolerance_ha': 1e-6}
+                'changing_class_labels': list(p.changing_class_labels), 'n_before_tiles': len(before_tiles), 'tolerance_ha': 1e-6,
+                'relative_tolerance': 1e-9}
     outputs = [p.regional_transitions_path, p.regional_transitions_summary_path]
     hb.create_directories(p.cur_dir)
     provenance_path = os.path.join(p.cur_dir, 'regional_transitions_provenance.json')
@@ -1799,24 +1801,29 @@ def regional_transitions(p):
     matrix = np.zeros((n_regions + 1, n, n))
     stock_before, stock_after, nodata_changed = np.zeros((n_regions + 1, n)), np.zeros((n_regions + 1, n)), np.zeros(n_regions + 1)
     stripe = ratio * max(1, int(5e6 // max(1, n_cols * ratio)))
-    for row in range(0, n_rows, stripe):
-        height = min(stripe, n_rows - row)
-        base = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
-        before, after = base.copy(), base.copy()
-        seals_utils.paste_allocation_tiles(before, None, row, before_windows)
-        seals_utils.paste_allocation_tiles(after, None, row, after_windows)
-        ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
-        region = np.repeat(np.repeat(regions_coarse[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
-        valid = (before != p.lulc_ndv) & (after != p.lulc_ndv)
-        flipped = ((before != p.lulc_ndv) != (after != p.lulc_ndv)) & (region > 0)
-        nodata_changed += np.bincount(region[flipped], weights=ha[flipped], minlength=n_regions + 1)
-        matrix += seals_utils.regional_transition_hectares(before, after, ha, region, valid, class_ids, n_regions)
-        for k, class_id in enumerate(class_ids):
-            for stock, array in ((stock_before, before), (stock_after, after)):
-                mask = valid & (region > 0) & (array == class_id)
-                stock[:, k] += np.bincount(region[mask], weights=ha[mask], minlength=n_regions + 1)
-    transitions, summary = seals_utils.summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed,
-                                                                      settings['tolerance_ha'])
+    try:
+        for row in range(0, n_rows, stripe):
+            height = min(stripe, n_rows - row)
+            base = hb.load_geotiff_chunk_by_cr_size(lulc_path, [0, row, n_cols, height]).astype(np.int64)
+            before, after = base.copy(), base.copy()
+            seals_utils.paste_allocation_tiles(before, None, row, before_windows)
+            seals_utils.paste_allocation_tiles(after, None, row, after_windows)
+            ha = hb.load_geotiff_chunk_by_cr_size(p.aoi_ha_per_cell_fine_path, [0, row, n_cols, height]).astype(np.float64)
+            region = np.repeat(np.repeat(regions_coarse[row // ratio:(row + height) // ratio], ratio, axis=0), ratio, axis=1)
+            valid = (before != p.lulc_ndv) & (after != p.lulc_ndv)
+            flipped = ((before != p.lulc_ndv) != (after != p.lulc_ndv)) & (region > 0)
+            nodata_changed += np.bincount(region[flipped], weights=ha[flipped], minlength=n_regions + 1)
+            matrix += seals_utils.regional_transition_hectares(before, after, ha, region, valid, class_ids, n_regions)
+            for k, class_id in enumerate(class_ids):
+                for stock, array in ((stock_before, before), (stock_after, after)):
+                    mask = valid & (region > 0) & (array == class_id)
+                    stock[:, k] += np.bincount(region[mask], weights=ha[mask], minlength=n_regions + 1)
+        transitions, summary = seals_utils.summarize_regional_transitions(matrix, stock_before, stock_after, intended, class_labels, allowed,
+                                                                          settings['tolerance_ha'], settings['relative_tolerance'])
+    except NameError as error:
+        # An audit must not stop the years that follow: say what went wrong, write no tables and let the run go on.
+        hb.log('regional_transitions: WARNING, no tables written for ' + str(p.year) + ' because ' + str(error))
+        return p
     summary['nodata_changed_ha'] = summary['region_id'].map(lambda r: float(nodata_changed[r]))
     for table in (transitions, summary):
         table.insert(0, 'year', int(p.year))
