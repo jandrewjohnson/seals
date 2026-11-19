@@ -2815,3 +2815,71 @@ def summarize_regional_transitions(matrix, stock_before, stock_after, intended, 
                             'intended_net_ha': target, 'realized_minus_intended_ha': gain - loss - target,
                             'disallowed_gain_ha': violation})
     return pd.DataFrame(transitions), pd.DataFrame(summary)
+
+def regressor_ndv_mask(array, ndv):
+    """Where a static regressor holds its declared no-data value.
+
+    Args:
+        array (numpy.ndarray): the regressor values as read from the file.
+        ndv (float or None): the file's declared no-data value, from hb.get_ndv_from_path.
+
+    Returns:
+        numpy.ndarray: boolean, True at no-data cells. All False when the file declares no no-data value.
+    """
+    if ndv is None:
+        return np.zeros(array.shape, dtype=bool)
+    if np.isnan(ndv):
+        return np.isnan(array)
+    return array == ndv
+
+def fill_regressor_ndv(array, invalid, layer_type):
+    """Give a static regressor's no-data cells a value that does not decide their rank.
+
+    An additive layer's no-data cells take the median of the block's valid cells, so the cell is ranked by the other
+    regressors as if this one were typical there. A multiplicative layer's no-data cells take 0, which makes its factor
+    1 - (1 - coefficient) * 0 = 1, so the layer neither favours nor forbids the cell. If the whole block is no-data, an
+    additive layer also takes 0 and adds nothing.
+
+    Args:
+        array (numpy.ndarray): the regressor values, raw or normalized.
+        invalid (numpy.ndarray): boolean, True at no-data cells (see regressor_ndv_mask).
+        layer_type (str): 'additive' or 'multiplicative'.
+
+    Returns:
+        numpy.ndarray: float64 copy of array with no-data cells filled, or array itself if it has no no-data cell.
+    """
+    if not invalid.any():
+        return array
+    filled = array.astype(np.float64)
+    if layer_type == 'multiplicative' or invalid.all():
+        filled[invalid] = 0.0
+    else:
+        filled[invalid] = np.median(filled[~invalid])
+    return filled
+
+def load_static_regressor(path, block_list, layer_type, normalize):
+    """Read one additive or multiplicative regressor block so that its no-data cells cannot decide a rank.
+
+    The no-data value is the one the file declares. With normalize, the valid cells are normalized among themselves
+    (hb.normalize_array subtracts the minimum, so a no-data value left in would squeeze every valid cell into a range
+    near 1e-9). A block with no no-data cell is read exactly as before.
+
+    Args:
+        path (str): the regressor raster.
+        block_list (list): [col, row, n_cols, n_rows] for hb.load_geotiff_chunk_by_cr_size.
+        layer_type (str): 'additive' or 'multiplicative'.
+        normalize (bool): log-normalize to [0, 1] as calibration does.
+
+    Returns:
+        numpy.ndarray: the block, ready for spatial_layers_3d.
+    """
+    array = hb.load_geotiff_chunk_by_cr_size(path, block_list)
+    invalid = regressor_ndv_mask(array, hb.get_ndv_from_path(path))
+    if not invalid.any():
+        return np.nan_to_num(hb.normalize_array(array), nan=0.0) if normalize else array
+    if normalize:
+        normalized = np.zeros(array.shape, dtype=np.float64)
+        if not invalid.all():
+            normalized[~invalid] = np.nan_to_num(hb.normalize_array(array[~invalid]), nan=0.0)
+        array = normalized
+    return fill_regressor_ndv(array, invalid, layer_type)
