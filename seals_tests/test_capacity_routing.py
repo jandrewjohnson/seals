@@ -1,7 +1,7 @@
 """Capacity routing alone: the same targets, preferences, coefficients and kernel, with and without adjacent_coarse_budgets.
 
 Both runs go through the stock check, the real Cython kernel on the coefficients allocation_zones prepares (the
-kernel_allocation stand-in for allocation_zones, see test_donor_restrictions_projectflow) and the transition audit. The
+kernel_allocation stand-in for allocation_zones, see test_donor_restrictions) and the transition audit. The
 routed run adds adjacent_coarse_budgets before the kernel. No donor rule, mask or coefficient differs between the runs.
 
 Region 1 asks cropland +8 and OtherNat -8, split evenly over its two coarse cells, but its top cell holds no OtherNat:
@@ -16,7 +16,7 @@ import hazelbean as hb
 from osgeo import gdal
 
 from seals import seals_cython_functions, seals_main, seals_utils
-import test_donor_restrictions_projectflow as donor
+import test_donor_restrictions as donor
 import test_regional_demand_feasibility as feasibility
 from test_regional_demand_feasibility import ALL_LABELS, IDS, LABELS, NDV, build, scenario_years, write_raster
 
@@ -66,7 +66,7 @@ def run(root, routed, bottom_forest=False, change=None, lulc=None, ha=None, laye
     lulc = region_1(bottom_forest) if lulc is None else lulc
     paths = build(os.path.join(root, 'in'), change or TARGETS, lulc=lulc, ha=ha, years=years)
     preference_path = os.path.join(root, 'in', 'preference.tif')
-    write_raster(preference_path, donor.preference(lulc), 0.25, -9999.0, gdal.GDT_Float64)
+    write_raster(preference_path, donor.suitability(lulc), 0.25, -9999.0, gdal.GDT_Float64)
     df = pd.read_csv(paths['coefficients'])
     df.loc[df['spatial_regressor_name'] == 'suitability', 'data_location'] = preference_path
     if layer:
