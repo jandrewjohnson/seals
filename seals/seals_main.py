@@ -1036,7 +1036,7 @@ def calibration_zones(passed_p=None):
                 correct_coarse_block_list = p.coarse_blocks_list
             if spatial_layer_types[c] == 'additive' or spatial_layer_types[c] == 'multiplicative':
                 # The file's declared no-data cells are filled so they cannot decide a rank (see load_static_regressor).
-                # NZ_brazil fix kept inside: normalize_array returns NaN on all-zero chunks, wrapped with nan_to_num.
+                # normalize_array returns NaN on an all-zero block, which the loader turns into zeros.
                 spatial_layers_3d[c] = seals_utils.load_static_regressor(path, correct_fine_block_list, spatial_layer_types[c], normalize_inputs)
             elif spatial_layer_types[c][0:8] == 'gaussian':
                 # updated_path = os.path.join(p.calibration_zones_dir, 'class_' + spatial_layer_names[c].split('_')[1] + '_gaussian_' + spatial_layer_names[c].split('_')[3] + '_convolution.tif')
