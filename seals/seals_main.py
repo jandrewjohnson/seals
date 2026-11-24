@@ -1035,12 +1035,9 @@ def calibration_zones(passed_p=None):
                 correct_fine_block_list = p.fine_blocks_list
                 correct_coarse_block_list = p.coarse_blocks_list
             if spatial_layer_types[c] == 'additive' or spatial_layer_types[c] == 'multiplicative':
-                if normalize_inputs is True:
-                    # NZ_brazil fix: normalize_array returns NaN on all-zero chunks (divide by zero).
-                    # Wrap with nan_to_num so a missing class in this block does not poison suitability.
-                    spatial_layers_3d[c] = np.nan_to_num(hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)), nan=0.0)
-                else:
-                    spatial_layers_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)
+                # The file's declared no-data cells are filled so they cannot decide a rank (see load_static_regressor).
+                # normalize_array returns NaN on an all-zero block, which the loader turns into zeros.
+                spatial_layers_3d[c] = seals_utils.load_static_regressor(path, correct_fine_block_list, spatial_layer_types[c], normalize_inputs)
             elif spatial_layer_types[c][0:8] == 'gaussian':
                 # updated_path = os.path.join(p.calibration_zones_dir, 'class_' + spatial_layer_names[c].split('_')[1] + '_gaussian_' + spatial_layer_names[c].split('_')[3] + '_convolution.tif')
                 # L.debug('updated_path', updated_path)
@@ -2534,16 +2531,10 @@ def allocation(passed_p=None):
 
                 add_randomness = 0 # DECIDED NOT TO DO THIS. Don't try it again. I'm warning you! Increment the following comment up 1 for each unsuccessful attempt at doing this: 3
                 if spatial_layer_types[c] == 'additive' or spatial_layer_types[c] == 'multiplicative':
-                    if normalize_inputs is True:
-                        spatial_layers_3d[c] = hb.normalize_array(hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list))
-                    else:
-
-                        if add_randomness:
-                            a = hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)
-                            a = a * (1 - (np.random.random(a.shape)/100))
-                            spatial_layers_3d[c] = a
-                        else:
-                            spatial_layers_3d[c] = hb.load_geotiff_chunk_by_cr_size(path, correct_fine_block_list)
+                    # The file's declared no-data cells are filled so they cannot decide a rank (see load_static_regressor).
+                    spatial_layers_3d[c] = seals_utils.load_static_regressor(path, correct_fine_block_list, spatial_layer_types[c], normalize_inputs)
+                    if add_randomness:
+                        spatial_layers_3d[c] = spatial_layers_3d[c] * (1 - (np.random.random(spatial_layers_3d[c].shape)/100))
 
                 # NOTE: Currently gaussian is not used as it is just considered additive
                 elif spatial_layer_types[c][0:8] == 'gaussian':
