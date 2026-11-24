@@ -2372,17 +2372,15 @@ def confirm_file_identity(recorded):
         recorded (dict): the output of describe_file_identity.
 
     Returns:
-        dict: the record, refreshed if only the size or time changed and the bytes are the same.
-
-    Raises:
-        NameError: if the file's bytes differ from the recorded ones.
+        dict or None: the record, refreshed if only the size or time changed and the bytes are the same; None if the
+        bytes differ.
     """
     stat = os.stat(recorded['path'])
     if stat.st_size == recorded['size'] and stat.st_mtime_ns == recorded['mtime_ns']:
         return recorded
     current = describe_file_identity(recorded['path'])
     if current['sha256'] != recorded['sha256']:
-        raise NameError('Input changed since the output was made: ' + recorded['path'] + '. Delete the output to recompute it.')
+        return None
     return current
 
 def reuse_outputs_if_inputs_unchanged(task_name, provenance_path, output_paths, sources, settings):
@@ -2390,11 +2388,11 @@ def reuse_outputs_if_inputs_unchanged(task_name, provenance_path, output_paths, 
 
     Returns False when an output or the record is missing, so the task makes everything again. Returns True when all
     outputs exist and every recorded input still has the same bytes, after a size and time check that hashes a file
-    again only if that check changes; a record refreshed that way is saved. Raises when the settings, the set of
-    inputs or any input's bytes differ, because the outputs then no longer describe the inputs.
+    again only if that check changes; a record refreshed that way is saved. Logs the reason and returns False when the
+    settings, the set of inputs or any input's bytes differ, because the outputs then no longer describe the inputs.
 
     Args:
-        task_name (str): named in the error.
+        task_name (str): named in the log message.
         provenance_path (str): the JSON record written by save_provenance.
         output_paths (list): every output the task makes.
         sources (dict): name -> path of every input file.
@@ -2402,9 +2400,6 @@ def reuse_outputs_if_inputs_unchanged(task_name, provenance_path, output_paths, 
 
     Returns:
         bool: True if the outputs can be reused.
-
-    Raises:
-        NameError: if the settings, input paths or input bytes differ from the record.
     """
     import json
     if not (hb.path_exists(provenance_path) and all(hb.path_exists(i) for i in output_paths)):
@@ -2413,8 +2408,13 @@ def reuse_outputs_if_inputs_unchanged(task_name, provenance_path, output_paths, 
         recorded = json.load(f)
     if recorded['settings'] != json.loads(json.dumps(settings)) or set(recorded['sources']) != set(sources) or any(
             recorded['sources'][key]['path'] != path for key, path in sources.items()):
-        raise NameError(task_name + ' inputs or settings differ from those recorded in ' + provenance_path + '. Delete the outputs to recompute them.')
+        hb.log(task_name + ': recomputing because its inputs or settings differ from those recorded in ' + provenance_path)
+        return False
     confirmed = {key: confirm_file_identity(record) for key, record in recorded['sources'].items()}
+    changed = [record['path'] for key, record in recorded['sources'].items() if confirmed[key] is None]
+    if changed:
+        hb.log(task_name + ': recomputing because these inputs changed since the outputs were made: ' + ', '.join(changed))
+        return False
     if confirmed != recorded['sources']:
         with open(provenance_path, 'w') as f:
             json.dump({'sources': confirmed, 'settings': recorded['settings']}, f, indent=2)
