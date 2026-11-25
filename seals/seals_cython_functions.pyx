@@ -326,9 +326,10 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
                 requested[from_class] = 0
                 if not np.any(requested > 0):
                     continue
-                donor_cells = (input_lulc[current_fine_starting_r: current_fine_starting_r + resolution,
-                                          current_fine_starting_c: current_fine_starting_c + resolution] == change_class_ids[from_class]).ravel().astype(np.int64)
-                receiver_of_cell = assign_transitions_for_donor(requested, donor_cells, current_to_rank_arrays.reshape(n_allocation_classes, -1), current_raveled)
+                current_lulc = input_lulc[current_fine_starting_r: current_fine_starting_r + resolution, current_fine_starting_c: current_fine_starting_c + resolution]
+                donor_cells = (current_lulc == change_class_ids[from_class]).ravel().astype(np.int64)
+                receiver_of_cell = assign_transitions_for_donor(requested, donor_cells,
+                                                                current_to_rank_arrays.reshape(n_allocation_classes, -1), current_raveled)
                 for i in range(n_fine_grid_cells_per_coarse_cell):
                     to_class = receiver_of_cell[i]
                     if to_class >= 0:
