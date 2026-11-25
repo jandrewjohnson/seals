@@ -16,6 +16,146 @@ from libc.math cimport sin
 from libc.math cimport fabs
 import math, time   
 
+@cython.cdivision(True)
+@cython.boundscheck(True)
+@cython.wraparound(False)
+def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not None,
+                                 ndarray[np.int64_t, ndim=1] donor_cells not None,
+                                 ndarray[np.float64_t, ndim=2] scores_to_rank not None,
+                                 ndarray[np.int64_t, ndim=2] ranked_cells not None,
+                                 ):
+    """Choose which cells of one donor class change, and to which receiver class.
+
+    Each receiver goes down its own ranking of the donor's cells. Receivers that want the same cell are compared by where that
+    cell stands in their rankings, because scores of different classes are not on one scale. Equal standing goes to the larger
+    request, then to the receiver that loses more by taking its next cell instead, as a share of its own largest score, then
+    to the class listed first. A receiver left short then takes a cell from a receiver that can be moved to another one, so the
+    number of cells placed is the largest possible. Receivers equally short are served in order of request, then
+    the loss from their best to their second cell, then the class listed first. Every cell changes at most once.
+
+    Scaling all scores of a class by a positive number changes nothing, up to rounding and while they stay below the limit for a
+    cell that cannot be allocated. Renaming the classes changes nothing unless receivers are equal in every comparison above,
+    when the class listed first is served.
+
+    Args:
+        requested (array): Cells requested by each receiver class. A fraction counts as a whole cell.
+        donor_cells (array): 1 where the cell, in raveled order, holds the donor class.
+        scores_to_rank (array): Receiver by raveled cell. Lower is better. 999999999 or more marks a cell that cannot be allocated.
+        ranked_cells (array): Receiver by rank. Raveled cells, best first.
+
+    Returns:
+        array: Receiver index of each raveled cell, or -1 where nothing changes.
+    """
+    cdef np.int64_t n_classes = scores_to_rank.shape[0]
+    cdef np.int64_t n_cells = scores_to_rank.shape[1]
+    cdef np.int64_t receiver, rival, taker, cell, rank, head, tail, best
+    cdef int moved
+
+    cdef np.ndarray[np.int64_t, ndim=1] needed = np.ceil(requested).astype(np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] next_rank = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] n_candidates = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=2] candidates = np.zeros((n_classes, n_cells), dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=2] standing = np.zeros((n_classes, n_cells), dtype=np.int64)
+    cdef np.ndarray[np.float64_t, ndim=2] loss_if_refused = np.zeros((n_classes, n_cells), dtype=np.float64)
+    cdef np.float64_t score_scale, next_score
+    cdef np.ndarray[np.int64_t, ndim=1] holder = np.full(n_cells, -1, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] taken_from = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] offered_by = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] queue = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] is_short = np.zeros(n_classes, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] visited = np.zeros(n_classes, dtype=np.int64)
+
+    for receiver in range(n_classes):
+        if needed[receiver] > 0:
+            for rank in range(n_cells):
+                cell = ranked_cells[receiver, rank]
+                if donor_cells[cell] == 1 and scores_to_rank[receiver, cell] < 999999999.0:
+                    candidates[receiver, n_candidates[receiver]] = cell
+                    standing[receiver, cell] = n_candidates[receiver]
+                    n_candidates[receiver] += 1
+            # With no other cell to take, the next score is zero, the score of a cell that cannot be allocated.
+            if n_candidates[receiver] > 0:
+                score_scale = max(fabs(scores_to_rank[receiver, candidates[receiver, 0]]),
+                                  fabs(scores_to_rank[receiver, candidates[receiver, n_candidates[receiver] - 1]]))
+                for rank in range(n_candidates[receiver]):
+                    cell = candidates[receiver, rank]
+                    next_score = scores_to_rank[receiver, candidates[receiver, rank + 1]] if rank + 1 < n_candidates[receiver] else 0.0
+                    loss_if_refused[receiver, cell] = (next_score - scores_to_rank[receiver, cell]) / score_scale
+
+    # Receivers ask for cells in their own order until each is satisfied or has asked for every candidate.
+    moved = 1
+    while moved:
+        moved = 0
+        for receiver in range(n_classes):
+            while needed[receiver] > 0 and next_rank[receiver] < n_candidates[receiver]:
+                cell = candidates[receiver, next_rank[receiver]]
+                next_rank[receiver] += 1
+                rival = holder[cell]
+                if rival >= 0:
+                    if standing[receiver, cell] != standing[rival, cell]:
+                        if standing[receiver, cell] > standing[rival, cell]:
+                            continue
+                    elif requested[receiver] != requested[rival]:
+                        if requested[receiver] < requested[rival]:
+                            continue
+                    elif loss_if_refused[receiver, cell] != loss_if_refused[rival, cell]:
+                        if loss_if_refused[receiver, cell] < loss_if_refused[rival, cell]:
+                            continue
+                    elif receiver > rival:
+                        continue
+                    needed[rival] += 1
+                holder[cell] = receiver
+                needed[receiver] -= 1
+                moved = 1
+
+    # A short receiver can still be served if a receiver holding one of its candidates can move to a free cell.
+    while True:
+        receiver = -1
+        for rival in range(n_classes):
+            if needed[rival] > 0 and is_short[rival] == 0 and n_candidates[rival] > 0:
+                if receiver >= 0:
+                    if needed[rival] != needed[receiver]:
+                        if needed[rival] < needed[receiver]:
+                            continue
+                    elif requested[rival] != requested[receiver]:
+                        if requested[rival] < requested[receiver]:
+                            continue
+                    elif loss_if_refused[rival, candidates[rival, 0]] <= loss_if_refused[receiver, candidates[receiver, 0]]:
+                        continue
+                receiver = rival
+        if receiver < 0:
+            break
+        visited[:] = 0
+        visited[receiver] = 1
+        queue[0] = receiver
+        head, tail, best = 0, 1, -1
+        while head < tail and best < 0:
+            taker = queue[head]
+            head += 1
+            for rank in range(n_candidates[taker]):
+                cell = candidates[taker, rank]
+                rival = holder[cell]
+                if rival < 0:
+                    best = cell
+                    break
+                if visited[rival] == 0:
+                    visited[rival] = 1
+                    taken_from[rival] = cell
+                    offered_by[rival] = taker
+                    queue[tail] = rival
+                    tail += 1
+        if best < 0:
+            is_short[receiver] = 1
+            continue
+        while taker != receiver:
+            holder[best] = taker
+            best = taken_from[taker]
+            taker = offered_by[taker]
+        holder[best] = receiver
+        needed[receiver] -= 1
+
+    return holder
+
 # NZ_brazil fix (2026-05-28): cdivision=True so int64/int64 returns int (C semantics)
 # instead of float64 (Python semantics). Required for line 231's array indexing under
 # NumPy 2.x which rejects float scalars as indices. The file-level directive at line 1
@@ -86,9 +226,9 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
     cdef np.ndarray[np.float64_t, ndim=3] current_to_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=3] current_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
 
-    cdef np.ndarray[np.float64_t, ndim=2] current_goals = np.zeros((n_allocation_classes, n_allocation_classes), dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=2] current_goal_left = np.zeros((n_allocation_classes, n_allocation_classes), dtype=np.float64)
-    cdef np.ndarray[np.int64_t, ndim=1] current_positions = np.zeros(n_allocation_classes, dtype=np.int64)
+    cdef np.ndarray[np.float64_t, ndim=1] requested = np.zeros(n_allocation_classes, dtype=np.float64)
+    cdef np.ndarray[np.int64_t, ndim=1] donor_cells = np.zeros(n_fine_grid_cells_per_coarse_cell, dtype=np.int64)
+    cdef np.ndarray[np.int64_t, ndim=1] receiver_of_cell = np.zeros(n_fine_grid_cells_per_coarse_cell, dtype=np.int64)
 
     cdef np.ndarray[np.float64_t, ndim=3] output_to_rank_arrays = np.zeros((n_allocation_classes, n_fine_rows, n_fine_cols), dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=3] output_rank_arrays = np.zeros((n_allocation_classes, n_fine_rows, n_fine_cols), dtype=np.float64)
@@ -104,7 +244,10 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
     for coarse_r in range(n_coarse_rows):
         for coarse_c in range(n_coarse_cols):
 
-            # Starting with from_class, consider each to_class allocations.
+            current_to_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
+            current_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
+
+            # Rank the cells for every class before anything is allocated. In this loop from_class is the class that would gain the cell.
             for from_class in range(n_allocation_classes):
                 report_time = time.time()
                 # Check if there's any allocation to do, skipping if not for speed
@@ -114,28 +257,11 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
                         total_absolute_change_needed += abs(coarse_change_matrix_4d[coarse_r, coarse_c, from_class, to_class])
 
 
-                for to_class in range(n_allocation_classes):
-                    current_goals[from_class, to_class] = coarse_change_matrix_4d[coarse_r, coarse_c, from_class, to_class]
-
-                    # Set diagonal to zero
-                    for i in range(n_allocation_classes):
-                        current_goals[i, i] = 0
-
-                    # Make copy to increment down. Actually, I'm not sure if this is doing anything because it might just be operating on the buffer.
-                    current_goal_left[from_class, to_class] = coarse_change_matrix_4d[coarse_r, coarse_c, from_class, to_class]
-                    for i in range(n_allocation_classes):
-                        current_goal_left[i, i] = 0
-
-                    # Keep track of where in each from_class the algorithm currently is as it marches down from best to worst suitability cells.
-                    current_positions[from_class] = 0
-
                 # TODO Check that this is right.
                 if total_absolute_change_needed > 0.0 or True:
 
 
 
-                    current_to_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
-                    current_rank_arrays = np.zeros((n_allocation_classes, resolution, resolution), dtype=np.float64)
                     current_fine_starting_r = coarse_r * resolution
                     current_fine_starting_c = coarse_c * resolution
 
@@ -199,7 +325,7 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
                         # # TODOO Speed up ranking by eliminating nans.
                         # current_raveled[from_class, 0: n_to_sort] = current_to_rank_arrays[from_class][current_to_rank_arrays[from_class] != 0].argsort(axis=None)
                         #
-                        current_raveled[from_class] = current_to_rank_arrays[from_class].argsort(axis=None)
+                        current_raveled[from_class] = current_to_rank_arrays[from_class].argsort(axis=None, kind='stable')
 
                     # TODOO Abandonded start: It is trickier than expected to "rerank"
                     # the rank to eliminate edges because it calls adjacent cells. Need to have a new instantiat9ion of the tiling-system
@@ -218,37 +344,24 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
                                 counter += 1
                         output_rank_arrays[from_class, current_fine_starting_r: current_fine_starting_r + resolution, current_fine_starting_c: current_fine_starting_c + resolution] = current_rank_arrays[from_class]
 
-                    # Do the allocation
-
-                    # print('current_goal_left', current_goal_left)
-                    for while_counter in range(n_fine_grid_cells_per_coarse_cell):
-                        for from_class in range(n_allocation_classes):
-                            for to_class in range(n_allocation_classes):
-
-                                # TODOOO ELIMINATE DIAGONAL FROM GOAL
-                                if current_goal_left[from_class, to_class] > 0:
-
-                                    if current_to_rank_arrays[from_class, <int> (current_raveled[from_class, current_positions[from_class]] / resolution), current_raveled[from_class, current_positions[from_class]] % resolution] < 999999999.0:
-                                        # Get current position OVERALL (i.e., including current_fine_starting_x) based on dividing and moduloing the current id.
-                                        current_fine_r = current_fine_starting_r + current_raveled[to_class, current_positions[to_class]] / resolution
-                                        current_fine_c = current_fine_starting_c + current_raveled[to_class, current_positions[to_class]] % resolution
-
-                                        # Write 0-1 to output_change_arrays (3dim) specific to this fine location and this expansion class.
-                                        output_change_arrays[to_class, current_fine_r, current_fine_c] = 1
-
-                                        # Write the from_class's label value to the projected lulc map
-                                        projected_lulc[current_fine_r, current_fine_c] = change_class_ids[to_class]
-
-                                        # Increment the current allocation position by 1, moving the the next best cell.
-                                        # if from_class == 1 and coarse_c == 0 and coarse_r == 0:
-                                        #     print('current_goal_left', current_goal_left)
-                                        #     print('current_positions', current_positions)
-                                        current_positions[to_class] += 1
-
-                                        # Reduce the current class's goal by the amount of hectares in that
-                                        current_goal_left[from_class, to_class] -= 1
-                                        # current_goal_left[from_class, to_class] -= hectares_per_grid_cell[current_fine_r, current_fine_c]
-
+            # Do the allocation, one donor class at a time. A donor's cells are its own, so the order of donors does not matter.
+            for from_class in range(n_allocation_classes):
+                requested = np.array(coarse_change_matrix_4d[coarse_r, coarse_c, from_class])
+                requested[from_class] = 0
+                if not np.any(requested > 0):
+                    continue
+                current_lulc = input_lulc[current_fine_starting_r: current_fine_starting_r + resolution,
+                                          current_fine_starting_c: current_fine_starting_c + resolution]
+                donor_cells = (current_lulc == change_class_ids[from_class]).ravel().astype(np.int64)
+                receiver_of_cell = assign_transitions_for_donor(requested, donor_cells,
+                                                                current_to_rank_arrays.reshape(n_allocation_classes, -1), current_raveled)
+                for i in range(n_fine_grid_cells_per_coarse_cell):
+                    to_class = receiver_of_cell[i]
+                    if to_class >= 0:
+                        current_fine_r = current_fine_starting_r + i / resolution
+                        current_fine_c = current_fine_starting_c + i % resolution
+                        output_change_arrays[to_class, current_fine_r, current_fine_c] = 1
+                        projected_lulc[current_fine_r, current_fine_c] = change_class_ids[to_class]
 
     if cython_reporting_level >= 11:
         for i in range(n_allocation_classes):
