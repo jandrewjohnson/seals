@@ -104,13 +104,22 @@ def test_a_contested_cell_goes_to_the_receiver_that_ranks_it_higher_whatever_the
         assert projected[0].tolist() == [2, 3, 2]
 
 
-def test_equal_standing_goes_to_the_larger_request_then_the_better_score_then_the_class_listed_first():
+def test_equal_standing_goes_to_the_larger_request_then_the_larger_loss_then_the_class_listed_first():
     larger = allocate({(1, 2): 1, (1, 3): 2}, *two_receivers([9, 5, 1], [9, 5, 1]))
     assert larger[0].tolist() == [3, 3, 2]
-    better = allocate({(1, 2): 1, (1, 3): 1}, *two_receivers([9, 5, 1], [10, 5, 1]))
-    assert better[0].tolist() == [3, 2, 1]
+    # Class 3 loses seven ninths of its best score by moving on, class 2 four ninths of its own.
+    loses_more = allocate({(1, 2): 1, (1, 3): 1}, *two_receivers([9, 5, 1], [9, 2, 1]))
+    assert loses_more[0].tolist() == [3, 2, 1]
     exact = allocate({(1, 2): 1, (1, 3): 1}, *two_receivers([9, 5, 1], [9, 5, 1]))
     assert exact[0].tolist() == [2, 3, 1]
+
+
+def test_ties_do_not_depend_on_the_scale_of_a_class():
+    """A higher raw score must not decide a tie: class 3 has the larger loss at every scale."""
+    lulc, layers, coefficients = two_receivers([9, 5, 1], [9, 2, 1])
+    for scale in (2. ** -20, 1., 2. ** 20):
+        coefficients[1, 0] = scale
+        assert allocate({(1, 2): 1, (1, 3): 1}, lulc, layers, coefficients)[0].tolist() == [3, 2, 1]
 
 
 def test_equal_scores_are_taken_in_raster_order():
@@ -144,6 +153,121 @@ def test_uneven_eligibility_places_as_many_cells_as_any_assignment_could(seed):
         assert taken.sum() <= wanted[receiver] and (layers[receiver][taken] > 0).all()
 
 
+def make_sparse_case(rng, n=4, k=4, share=.3):
+    """One donor class covering the tile, receivers with few eligible cells each, strictly distinct scores."""
+    layers = rng.random((n, k, k)) * (rng.random((n, k, k)) < share)
+    layers[0] = 0
+    wanted = np.array([0, *rng.integers(1, 5, n - 1)])
+    eligible = np.repeat(layers.reshape(n, -1) > 0, wanted, axis=0)
+    return layers, wanted, eligible
+
+
+def place_without_moving_receivers(layers, wanted):
+    """The first phase alone, written independently: refused receivers ask on, nobody is moved."""
+    flat, n_cells = layers.reshape(len(layers), -1), layers[0].size
+    order = [[c for c in np.argsort(-f, kind='stable') if f[c] > 0] for f in flat]
+    held = {}
+    queue = [j for j in range(len(wanted)) for _ in range(wanted[j])]
+    asked = [0] * len(wanted)
+    while queue:
+        j = queue.pop()
+        while asked[j] < len(order[j]):
+            cell = order[j][asked[j]]
+            asked[j] += 1
+            rival = held.get(cell)
+            if rival is None or (order[rival].index(cell), -wanted[rival]) > (order[j].index(cell), -wanted[j]):
+                held[cell] = j
+                if rival is not None:
+                    queue.append(rival)
+                break
+    return len(held)
+
+
+def allocate_sparse(layers, wanted):
+    n, k = len(wanted), layers.shape[1]
+    matrix = np.zeros((1, 1, n, n))
+    matrix[0, 0, 0] = wanted
+    return allocate(matrix, np.ones((k, k), dtype=int), layers, np.eye(n))
+
+
+@pytest.fixture(scope='module')
+def sparse_cases():
+    """Random cases, with the most cells any assignment could place."""
+    from scipy.optimize import linear_sum_assignment
+    rng, cases = np.random.default_rng(0), []
+    for _ in range(400):
+        layers, wanted, eligible = make_sparse_case(rng)
+        rows, columns = linear_sum_assignment(-eligible.astype(float))
+        cases.append((layers, wanted, int(eligible[rows, columns].sum())))
+    return cases
+
+
+def rename(layers, wanted, order):
+    """Reorder the receivers. The donor stays first."""
+    return layers[order], wanted[order]
+
+
+def test_the_sparse_cases_need_receivers_to_be_moved(sparse_cases):
+    short = [best - place_without_moving_receivers(layers, wanted) for layers, wanted, best in sparse_cases]
+    assert sum(s > 0 for s in short) >= 10 and sum(s > 0 and best == wanted.sum() for s, (_, wanted, best) in zip(short, sparse_cases)) >= 5
+
+
+@pytest.mark.parametrize('feasible', [True, False])
+def test_sparse_eligibility_is_unaffected_by_class_order(sparse_cases, feasible):
+    """Covers requests that can all be met, and those that cannot, where which receiver goes short is itself a choice."""
+    n_checked = 0
+    for number, (layers, wanted, best) in enumerate(sparse_cases):
+        if (best == wanted.sum()) != feasible:
+            continue
+        n_checked += 1
+        projected = allocate_sparse(layers, wanted)
+        assert (projected != 1).sum() == best
+        # A single candidate says nothing on a relative scale, so two such receivers with equal requests are an exact tie.
+        single = [wanted[j] for j in range(1, 4) if (layers[j] > 0).sum() == 1]
+        if len(set(single)) < len(single):
+            continue
+        for order in itertools.permutations([1, 2, 3]):
+            order = np.array([0, *order])
+            renamed = allocate_sparse(*rename(layers, wanted, order))
+            assert np.array_equal(order[renamed - 1], projected - 1), number
+    assert n_checked >= 20
+
+
+def test_exact_symmetry_is_settled_by_class_order_the_same_way_every_time():
+    """Two receivers alike in every comparison, one eligible cell. The class listed first gets it, so renaming does change the map here."""
+    layers = np.zeros((3, 2, 2))
+    layers[1:, 0, 0] = .5
+    wanted = np.array([0, 1, 1])
+    assert allocate_sparse(layers, wanted)[0, 0] == 2
+    assert allocate_sparse(*rename(layers, wanted, np.array([0, 2, 1])))[0, 0] == 2
+
+
+def test_negative_coefficients_rank_the_lowest_layer_values_first():
+    projected = allocate({(1, 2): 3}, HALVES, RAMP, coefficients=np.array([[1.], [-10.]]))
+    assert projected[0].tolist() == [2, 2, 2, 1]
+
+
+def test_multiplicative_zero_constraints_keep_a_receiver_out():
+    layers = np.stack([RAMP[0], np.zeros((4, 4))])
+    layers[1, 0] = 1
+    matrix = np.zeros((1, 1, 2, 2))
+    matrix[0, 0, 0, 1] = 8
+    projected = seals_cython_functions.seals_allocation_from_change_matrix(
+        matrix, HALVES.astype(np.int64), layers, np.array([[1., 1.], [1., 0.]]), np.array([2, 1]), np.ones((4, 4), np.int64),
+        np.array([1, 2]), np.ones((4, 4)), '', 0.0, '')
+    assert (projected[0] == 1).all() and (projected[1] == 2).all()
+
+
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_masked_cells_stay_unchanged_whatever_their_scores(bad):
+    valid = np.ones((4, 4), np.int64)
+    valid[0] = 0
+    layer = RAMP.copy()
+    layer[0, 0] = bad
+    projected = allocate({(1, 2): 8}, HALVES, layer, valid=valid)
+    assert (projected[0] == 1).all() and (projected[1] == 2).all()
+
+
 def test_impossible_requests_stop_at_what_the_donor_has():
     projected = allocate({(1, 2): 12}, HALVES, RAMP)
     assert count_flows(HALVES, projected, 2).tolist() == [[0, 8], [0, 0]]
@@ -171,5 +295,6 @@ def test_loss_is_zero_when_the_observed_map_is_reproduced():
     observed = allocate({(1, 2): 3, (2, 1): 2}, lulc, RAMP)
     matrix = count_flows(lulc, observed, 2)[None, None].astype(float)
     loss, projected, *_ = seals_cython_functions.calibrate_from_change_matrix(
-        matrix, lulc, RAMP, np.ones((2, 1)), np.array([2]), np.ones((4, 4), np.int64), np.array([1, 2]), observed, np.ones((4, 4)), '', 0.0, np.float64(7.0), '')
+        matrix, lulc, RAMP, np.ones((2, 1)), np.array([2]), np.ones((4, 4), np.int64),
+        np.array([1, 2]), observed, np.ones((4, 4)), '', 0.0, np.float64(7.0), '')
     assert np.array_equal(projected, observed) and loss == 0

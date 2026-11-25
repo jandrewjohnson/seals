@@ -28,8 +28,14 @@ def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not Non
 
     Each receiver goes down its own ranking of the donor's cells. Receivers that want the same cell are compared by where that
     cell stands in their rankings, because scores of different classes are not on one scale. Equal standing goes to the larger
-    request, then the better score, then the class listed first. A receiver left short then takes a cell from a receiver that
-    can be moved to another one, so a request that can be met is met. Every cell changes at most once.
+    request, then to the receiver that loses more by taking its next cell instead, as a share of its own largest score, then
+    to the class listed first. A receiver left short then takes a cell from a receiver that can be moved to another one, so the
+    number of cells placed is the largest possible. Receivers equally short are served in order of request, then
+    the loss from their best to their second cell, then the class listed first. Every cell changes at most once.
+
+    Scaling all scores of a class by a positive number changes nothing, up to rounding and while they stay below the limit for a
+    cell that cannot be allocated. Renaming the classes changes nothing unless receivers are equal in every comparison above,
+    when the class listed first is served.
 
     Args:
         requested (array): Cells requested by each receiver class. A fraction counts as a whole cell.
@@ -50,6 +56,8 @@ def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not Non
     cdef np.ndarray[np.int64_t, ndim=1] n_candidates = np.zeros(n_classes, dtype=np.int64)
     cdef np.ndarray[np.int64_t, ndim=2] candidates = np.zeros((n_classes, n_cells), dtype=np.int64)
     cdef np.ndarray[np.int64_t, ndim=2] standing = np.zeros((n_classes, n_cells), dtype=np.int64)
+    cdef np.ndarray[np.float64_t, ndim=2] loss_if_refused = np.zeros((n_classes, n_cells), dtype=np.float64)
+    cdef np.float64_t score_scale, next_score
     cdef np.ndarray[np.int64_t, ndim=1] holder = np.full(n_cells, -1, dtype=np.int64)
     cdef np.ndarray[np.int64_t, ndim=1] taken_from = np.zeros(n_classes, dtype=np.int64)
     cdef np.ndarray[np.int64_t, ndim=1] offered_by = np.zeros(n_classes, dtype=np.int64)
@@ -65,6 +73,14 @@ def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not Non
                     candidates[receiver, n_candidates[receiver]] = cell
                     standing[receiver, cell] = n_candidates[receiver]
                     n_candidates[receiver] += 1
+            # With no other cell to take, the next score is zero, the score of a cell that cannot be allocated.
+            if n_candidates[receiver] > 0:
+                score_scale = max(fabs(scores_to_rank[receiver, candidates[receiver, 0]]),
+                                  fabs(scores_to_rank[receiver, candidates[receiver, n_candidates[receiver] - 1]]))
+                for rank in range(n_candidates[receiver]):
+                    cell = candidates[receiver, rank]
+                    next_score = scores_to_rank[receiver, candidates[receiver, rank + 1]] if rank + 1 < n_candidates[receiver] else 0.0
+                    loss_if_refused[receiver, cell] = (next_score - scores_to_rank[receiver, cell]) / score_scale
 
     # Receivers ask for cells in their own order until each is satisfied or has asked for every candidate.
     moved = 1
@@ -82,8 +98,8 @@ def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not Non
                     elif requested[receiver] != requested[rival]:
                         if requested[receiver] < requested[rival]:
                             continue
-                    elif scores_to_rank[receiver, cell] != scores_to_rank[rival, cell]:
-                        if scores_to_rank[receiver, cell] > scores_to_rank[rival, cell]:
+                    elif loss_if_refused[receiver, cell] != loss_if_refused[rival, cell]:
+                        if loss_if_refused[receiver, cell] < loss_if_refused[rival, cell]:
                             continue
                     elif receiver > rival:
                         continue
@@ -97,8 +113,16 @@ def assign_transitions_for_donor(ndarray[np.float64_t, ndim=1] requested not Non
         receiver = -1
         for rival in range(n_classes):
             if needed[rival] > 0 and is_short[rival] == 0 and n_candidates[rival] > 0:
-                if receiver < 0 or needed[rival] > needed[receiver] or (needed[rival] == needed[receiver] and requested[rival] > requested[receiver]):
-                    receiver = rival
+                if receiver >= 0:
+                    if needed[rival] != needed[receiver]:
+                        if needed[rival] < needed[receiver]:
+                            continue
+                    elif requested[rival] != requested[receiver]:
+                        if requested[rival] < requested[receiver]:
+                            continue
+                    elif loss_if_refused[rival, candidates[rival, 0]] <= loss_if_refused[receiver, candidates[receiver, 0]]:
+                        continue
+                receiver = rival
         if receiver < 0:
             break
         visited[:] = 0
@@ -326,7 +350,8 @@ def seals_allocation_from_change_matrix(ndarray[np.float64_t, ndim=4] coarse_cha
                 requested[from_class] = 0
                 if not np.any(requested > 0):
                     continue
-                current_lulc = input_lulc[current_fine_starting_r: current_fine_starting_r + resolution, current_fine_starting_c: current_fine_starting_c + resolution]
+                current_lulc = input_lulc[current_fine_starting_r: current_fine_starting_r + resolution,
+                                          current_fine_starting_c: current_fine_starting_c + resolution]
                 donor_cells = (current_lulc == change_class_ids[from_class]).ravel().astype(np.int64)
                 receiver_of_cell = assign_transitions_for_donor(requested, donor_cells,
                                                                 current_to_rank_arrays.reshape(n_allocation_classes, -1), current_raveled)
